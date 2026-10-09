@@ -20,4 +20,4 @@ jobs:
       - name: Show SDK
         run: dotnet --info
       - name: Build runner
-        run: dotnet build src/Runner.sln --configuration Release --no-restore
+        run: dotnet build src/Runner.sln --configuration Release
