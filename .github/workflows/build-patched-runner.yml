@@ -10,14 +10,23 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [osx-x64, osx-arm64]
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install .NET SDK
-        uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v7
+      - name: Build runner layout
+        run: ./dev.sh layout Release ${{ matrix.runtime }}
+        working-directory: src
+      - name: Package runner
+        run: ./dev.sh package Release ${{ matrix.runtime }}
+        working-directory: src
+      - name: Publish patched runner package
+        uses: actions/upload-artifact@v7
         with:
-          dotnet-version: 8.0.x
-      - name: Show SDK
-        run: dotnet --info
-      - name: Build runner
-        run: dotnet build src/Runner.sln --configuration Release
+          name: patched-runner-${{ matrix.runtime }}
+          path: _package/*
+          if-no-files-found: error
+          retention-days: 3
