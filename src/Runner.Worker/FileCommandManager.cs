@@ -131,6 +131,59 @@ namespace GitHub.Runner.Worker
 
         public Type ExtensionType => typeof(IFileCommandExtension);
 
+        private void AppendLocalArtifactPortalLink(IExecutionContext context, string filePath)
+        {
+            try
+            {
+                // Redirecting upload-artifact to a local Results API stores ZIPs
+                // outside GitHub's artifact catalogue. Add a direct browser link
+                // to that local store in the upload step's GitHub step summary.
+                var configuredResultsUrl = Environment.GetEnvironmentVariable("ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE");
+                if (String.IsNullOrWhiteSpace(configuredResultsUrl))
+                {
+                    return;
+                }
+
+                var actionContext = context.GetGitHubContext("action") ?? String.Empty;
+                var telemetryAction = context.StepTelemetry?.Action ?? String.Empty;
+                var isArtifactUpload = actionContext.IndexOf("upload-artifact", StringComparison.OrdinalIgnoreCase) >= 0
+                    || (telemetryAction.IndexOf("upload", StringComparison.OrdinalIgnoreCase) >= 0
+                        && telemetryAction.IndexOf("artifact", StringComparison.OrdinalIgnoreCase) >= 0);
+                if (!isArtifactUpload)
+                {
+                    return;
+                }
+
+                if (!Uri.TryCreate(configuredResultsUrl, UriKind.Absolute, out var configuredUri)
+                    || (configuredUri.Scheme != Uri.UriSchemeHttp && configuredUri.Scheme != Uri.UriSchemeHttps))
+                {
+                    Trace.Warning("ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE is not a valid HTTP(S) URL; skipping local artifact summary link");
+                    return;
+                }
+
+                var artifactsPage = new UriBuilder(configuredUri)
+                {
+                    Path = "/artifacts",
+                    Query = String.Empty,
+                    Fragment = String.Empty
+                }.Uri.AbsoluteUri.TrimEnd('/');
+
+                var summary = new StringBuilder();
+                summary.AppendLine();
+                summary.AppendLine("### Locally stored artifacts");
+                summary.AppendLine();
+                summary.AppendLine($"[Browse and download artifacts]({artifactsPage})");
+                summary.AppendLine();
+                File.AppendAllText(filePath, summary.ToString());
+                Trace.Info($"Added local artifact browser link to step summary: {artifactsPage}");
+            }
+            catch (Exception ex)
+            {
+                // A convenience link must never fail an otherwise successful workflow step.
+                Trace.Warning($"Could not add local artifact browser link to step summary: {ex.Message}");
+            }
+        }
+
         public void ProcessCommand(IExecutionContext context, string filePath, ContainerInfo container)
         {
             if (File.Exists(filePath))
@@ -229,14 +282,22 @@ namespace GitHub.Runner.Worker
 
         public void ProcessCommand(IExecutionContext context, string filePath, ContainerInfo container)
         {
-            if (String.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+            if (String.IsNullOrEmpty(filePath))
             {
-                Trace.Info($"Step Summary file ({filePath}) does not exist; skipping attachment upload");
+                Trace.Info("Step Summary file path is empty; skipping attachment upload");
                 return;
             }
 
             try
             {
+                AppendLocalArtifactPortalLink(context, filePath);
+
+                if (!File.Exists(filePath))
+                {
+                    Trace.Info($"Step Summary file ({filePath}) does not exist; skipping attachment upload");
+                    return;
+                }
+
                 var fileSize = new FileInfo(filePath).Length;
                 if (fileSize == 0)
                 {
