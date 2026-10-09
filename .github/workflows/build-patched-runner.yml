@@ -1,0 +1,23 @@
+name: Build patched runner
+
+on:
+  push:
+    branches: [feature/self-hosted-artifact-results-url]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: Show SDK
+        run: dotnet --info
+      - name: Build runner
+        run: dotnet build src/Runner.sln --configuration Release --no-restore
