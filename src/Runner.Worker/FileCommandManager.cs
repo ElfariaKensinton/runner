@@ -317,10 +317,13 @@ namespace GitHub.Runner.Worker
                 // GitHub may sanitize inline styles in job summaries, but preserve the intended styling here.
                 var nameCell = String.IsNullOrWhiteSpace(downloadUrl)
                     ? $"**{visibleArtifactName}**"
-                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" style=\"color: #000; text-decoration: none;\"><strong>{EscapeHtmlText(artifactName)}</strong></a>";
+                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" style=\"color: #000 !important; text-decoration: none !important;\"><strong>{EscapeHtmlText(artifactName).Replace("|", "&#124;")}</strong></a>";
+                // Use the official Primer download octicon as an image: GitHub's Markdown
+                // sanitizer does not preserve inline SVG, but HTTPS images are supported.
+                // The fourth Markdown-table column is center-aligned below.
                 var downloadCell = String.IsNullOrWhiteSpace(downloadUrl)
                     ? "—"
-                    : $"[⬇️]({downloadUrl} \"Download artifact\")";
+                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" title=\"Download artifact\"><img src=\"https://raw.githubusercontent.com/primer/octicons/main/icons/download-16.svg\" alt=\"Download\" width=\"16\" height=\"16\" /></a>";
 
                 if (String.IsNullOrWhiteSpace(downloadUrl))
                 {
@@ -774,7 +777,7 @@ namespace GitHub.Runner.Worker
             summary.AppendLine("Produced during runtime");
             summary.AppendLine();
             summary.AppendLine("| **Name** | **Size** | **Digest** | **Download** |");
-            summary.AppendLine("| :--- | :--- | :--- | :--- |");
+            summary.AppendLine("| :--- | :--- | :--- | :---: |");
             foreach (var row in rows)
             {
                 summary.AppendLine(row);
