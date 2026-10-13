@@ -14,7 +14,7 @@ on:
           - github-hosted
           - self-hosted
       push_to_release:
-        description: 'Upload the built runner packages to a GitHub Release'
+        description: 'Upload built packages to GitHub Release (branch pushes publish automatically)'
         type: boolean
         required: true
         default: false
@@ -30,14 +30,21 @@ jobs:
       matrix:
         runtime: [osx-x64, osx-arm64]
     runs-on: ${{ inputs.runner_type == 'self-hosted' && fromJSON('["self-hosted", "macOS"]') || 'macos-latest' }}
+    permissions:
+      actions: read
+      contents: write
     steps:
       - uses: actions/checkout@v7
+
       - name: Build runner layout
         run: ./dev.sh layout Release ${{ matrix.runtime }}
         working-directory: src
+
       - name: Package runner
         run: ./dev.sh package Release ${{ matrix.runtime }}
         working-directory: src
+
+      # Upload to the configured Actions artifact service for short-term downloads.
       - name: Publish patched runner package
         uses: actions/upload-artifact@v7
         with:
@@ -46,40 +53,32 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
-  release:
-    if: github.event_name == 'workflow_dispatch' && inputs.push_to_release
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Download macOS x64 package
-        uses: actions/download-artifact@v8
-        with:
-          name: patched-runner-osx-x64
-          path: release-assets/osx-x64
-
-      - name: Download macOS ARM64 package
-        uses: actions/download-artifact@v8
-        with:
-          name: patched-runner-osx-arm64
-          path: release-assets/osx-arm64
-
-      - name: Prepare GitHub Release
-        id: release
+      # Do not use download-artifact here: these packages may be stored by a
+      # self-hosted artifact server and therefore are not in GitHub's artifact API.
+      # Upload the file directly from this build job to the GitHub Release.
+      - name: Publish patched package to GitHub Release
+        if: github.event_name != 'workflow_dispatch' || inputs.push_to_release
         uses: actions/github-script@v9
+        env:
+          RUNNER_RUNTIME: ${{ matrix.runtime }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const version = fs.readFileSync('${{ github.workspace }}/src/runnerversion', 'utf8').trim();
+            const path = require('path');
+
+            const version = fs.readFileSync(
+              path.join(process.env.GITHUB_WORKSPACE, 'src', 'runnerversion'),
+              'utf8'
+            ).trim();
+            const runtime = process.env.RUNNER_RUNTIME;
             const tag = 'v' + version;
-            const assetNames = [
-              `actions-runner-osx-x64-${version}.tar.gz`,
-              `actions-runner-osx-arm64-${version}.tar.gz`
-            ];
+            const assetName = `actions-runner-${runtime}-${version}.tar.gz`;
+            const assetPath = path.join(process.env.GITHUB_WORKSPACE, '_package', assetName);
+
+            if (!fs.existsSync(assetPath)) {
+              throw new Error(`Built package not found: ${assetPath}`);
+            }
 
             let release;
             try {
@@ -90,20 +89,32 @@ jobs:
               })).data;
             } catch (error) {
               if (error.status !== 404) throw error;
-              release = (await github.rest.repos.createRelease({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag_name: tag,
-                name: tag,
-                body: `Patched GitHub Actions runner packages for ${version}.`,
-                draft: false,
-                prerelease: false
-              })).data;
+
+              try {
+                release = (await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: tag,
+                  name: tag,
+                  body: `Patched GitHub Actions runner packages for ${version}.`,
+                  draft: false,
+                  prerelease: false
+                })).data;
+              } catch (createError) {
+                // The other matrix job may have created the same release first.
+                if (createError.status !== 422) throw createError;
+                release = (await github.rest.repos.getReleaseByTag({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag
+                })).data;
+              }
             }
 
-            // Replace only the two patched macOS assets if they already exist.
-            for (const asset of (release.assets || [])) {
-              if (assetNames.includes(asset.name)) {
+            // Replace this architecture's asset only; the other matrix job
+            // publishes the other architecture under a different name.
+            for (const asset of release.assets || []) {
+              if (asset.name === assetName) {
                 await github.rest.repos.deleteReleaseAsset({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
@@ -112,25 +123,17 @@ jobs:
               }
             }
 
-            core.setOutput('version', version);
-            core.setOutput('upload_url', release.upload_url);
+            const stat = fs.statSync(assetPath);
+            const uploaded = await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.id,
+              name: assetName,
+              data: fs.createReadStream(assetPath),
+              headers: {
+                'content-type': 'application/gzip',
+                'content-length': stat.size
+              }
+            });
 
-      - name: Upload Release Asset (osx-x64)
-        uses: actions/upload-release-asset@v1.0.2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.release.outputs.upload_url }}
-          asset_path: ${{ github.workspace }}/release-assets/osx-x64/actions-runner-osx-x64-${{ steps.release.outputs.version }}.tar.gz
-          asset_name: actions-runner-osx-x64-${{ steps.release.outputs.version }}.tar.gz
-          asset_content_type: application/gzip
-
-      - name: Upload Release Asset (osx-arm64)
-        uses: actions/upload-release-asset@v1.0.2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.release.outputs.upload_url }}
-          asset_path: ${{ github.workspace }}/release-assets/osx-arm64/actions-runner-osx-arm64-${{ steps.release.outputs.version }}.tar.gz
-          asset_name: actions-runner-osx-arm64-${{ steps.release.outputs.version }}.tar.gz
-          asset_content_type: application/gzip
+            core.info(`Published ${assetName}: ${uploaded.data.browser_download_url}`);
