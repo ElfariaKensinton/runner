@@ -81,20 +81,12 @@ namespace GitHub.Runner.Worker.Handlers
 
             // upload-artifact logs the exact size of the archive returned by the Results service.
             // Capture it for the runner-generated artifact table; this must not affect step success.
-            if (!String.IsNullOrEmpty(line))
+            if (_executionContext.IsArtifactUploadAction && !String.IsNullOrEmpty(line))
             {
-                var actionContext = _executionContext.GetGitHubContext("action") ?? String.Empty;
-                var telemetryAction = _executionContext.StepTelemetry?.Action ?? String.Empty;
-                var isArtifactUpload = actionContext.IndexOf("upload-artifact", StringComparison.OrdinalIgnoreCase) >= 0
-                    || (telemetryAction.IndexOf("upload", StringComparison.OrdinalIgnoreCase) >= 0
-                        && telemetryAction.IndexOf("artifact", StringComparison.OrdinalIgnoreCase) >= 0);
-                if (isArtifactUpload)
+                var sizeMatch = _artifactUploadSizeRegex.Match(line);
+                if (sizeMatch.Success && Int64.TryParse(sizeMatch.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var sizeBytes))
                 {
-                    var sizeMatch = _artifactUploadSizeRegex.Match(line);
-                    if (sizeMatch.Success && Int64.TryParse(sizeMatch.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var sizeBytes))
-                    {
-                        _executionContext.UploadedArtifactSizeBytes = sizeBytes;
-                    }
+                    _executionContext.UploadedArtifactSizeBytes = sizeBytes;
                 }
             }
 
