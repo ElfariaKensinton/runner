@@ -137,6 +137,57 @@ namespace GitHub.Runner.Common.Tests.Worker
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", "Worker")]
+        public void CreateStepSummaryCommand_RendersArtifactListFormat()
+        {
+            const string resultsUrlVariable = "ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE";
+            var previousResultsUrl = Environment.GetEnvironmentVariable(resultsUrlVariable);
+
+            try
+            {
+                Environment.SetEnvironmentVariable(resultsUrlVariable, "https://artifacts.example.net/");
+
+                using (var hostContext = Setup())
+                {
+                    var outputFile = Path.Combine(_rootDirectory, "artifact-output");
+                    WriteContent(outputFile, new List<string>
+                    {
+                        "artifact-digest=sha256:33bbb8003ca9f2684ab9b9b85446aa77d27d2de61b094eef18c0e178e59774cd",
+                        "artifact-id=12345"
+                    });
+
+                    _executionContext.SetupGet(x => x.IsArtifactUploadAction).Returns(true);
+                    _executionContext.Setup(x => x.GetGitHubContext("output")).Returns(outputFile);
+                    _executionContext.SetupGet(x => x.ActionInputs).Returns(new Dictionary<string, string>
+                    {
+                        ["name"] = "patched-runner-osx-arm64"
+                    });
+                    _executionContext.SetupGet(x => x.UploadedArtifactSizeBytes).Returns(128L * 1024 * 1024);
+
+                    var stepSummaryFile = Path.Combine(_rootDirectory, "artifact-summary");
+                    WriteContent(stepSummaryFile, new List<string> { "# Upload results" });
+
+                    _createStepCommand.ProcessCommand(_executionContext.Object, stepSummaryFile, null);
+
+                    var summary = File.ReadAllText(stepSummaryFile);
+                    Assert.Contains("Produced during runtime", summary);
+                    Assert.Contains("<b>patched-runner-osx-arm64</b>", summary);
+                    Assert.Contains("128 MB", summary);
+                    Assert.Contains("sha256:33bbb800…", summary);
+                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/package.svg", summary);
+
+                    _jobExecutionContext.Complete();
+                    Assert.Equal(0, _issues.Count);
+                }
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(resultsUrlVariable, previousResultsUrl);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
         public void CreateStepSummaryCommand_ScrubSecrets()
         {
             using (var hostContext = Setup())

@@ -1,10 +1,14 @@
 ﻿using GitHub.DistributedTask.WebApi;
+using GitHub.DistributedTask.Pipelines.ContextData;
 using GitHub.Runner.Worker.Container;
 using GitHub.Runner.Common;
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.IO;
+using System.Globalization;
 using System.Text;
+using System.Text.Json;
 
 namespace GitHub.Runner.Worker
 {
@@ -74,18 +78,38 @@ namespace GitHub.Runner.Worker
 
         public void ProcessFiles(IExecutionContext context, ContainerInfo container)
         {
+            // Parse GITHUB_OUTPUT before generating the summary because the summary uses
+            // the outputs written by actions/upload-artifact.
             foreach (var fileCommand in _commandExtensions)
             {
-                try
+                if (fileCommand is CreateStepSummaryCommand)
                 {
-                    fileCommand.ProcessCommand(context, Path.Combine(_fileCommandDirectory, fileCommand.FilePrefix + _fileSuffix), container);
+                    continue;
                 }
-                catch (Exception ex)
+
+                ProcessFileCommand(context, fileCommand, container);
+            }
+
+            foreach (var fileCommand in _commandExtensions)
+            {
+                if (fileCommand is CreateStepSummaryCommand)
                 {
-                    context.Error($"Unable to process file command '{fileCommand.ContextName}' successfully.");
-                    context.Error(ex);
-                    context.CommandResult = TaskResult.Failed;
+                    ProcessFileCommand(context, fileCommand, container);
                 }
+            }
+        }
+
+        private void ProcessFileCommand(IExecutionContext context, IFileCommandExtension fileCommand, ContainerInfo container)
+        {
+            try
+            {
+                fileCommand.ProcessCommand(context, Path.Combine(_fileCommandDirectory, fileCommand.FilePrefix + _fileSuffix), container);
+            }
+            catch (Exception ex)
+            {
+                context.Error($"Unable to process file command '{fileCommand.ContextName}' successfully.");
+                context.Error(ex);
+                context.CommandResult = TaskResult.Failed;
             }
         }
 
@@ -227,16 +251,287 @@ namespace GitHub.Runner.Worker
 
         public Type ExtensionType => typeof(IFileCommandExtension);
 
+        private void AppendArtifactSummary(IExecutionContext context, string filePath, ContainerInfo container)
+        {
+            try
+            {
+                // External Results URL artifacts do not appear in GitHub's native artifact list.
+                // Collect their rows here and publish one consolidated table when the job ends.
+                var configuredResultsUrl = Environment.GetEnvironmentVariable("ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE");
+                if (String.IsNullOrWhiteSpace(configuredResultsUrl) || !context.IsArtifactUploadAction)
+                {
+                    return;
+                }
+
+                if (!Uri.TryCreate(configuredResultsUrl, UriKind.Absolute, out var configuredUri)
+                    || (configuredUri.Scheme != Uri.UriSchemeHttp && configuredUri.Scheme != Uri.UriSchemeHttps))
+                {
+                    Trace.Warning("ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE is not a valid HTTP(S) URL; skipping external artifact summary table");
+                    return;
+                }
+
+                var artifactName = "artifact";
+                if (context.ActionInputs?.TryGetValue("name", out var configuredArtifactName) == true
+                    && !String.IsNullOrWhiteSpace(configuredArtifactName))
+                {
+                    artifactName = configuredArtifactName.Trim();
+                }
+                else if (context.ActionInputs?.TryGetValue("artifactName", out configuredArtifactName) == true
+                    && !String.IsNullOrWhiteSpace(configuredArtifactName))
+                {
+                    artifactName = configuredArtifactName.Trim();
+                }
+
+                var size = FormatArtifactSize(context.UploadedArtifactSizeBytes);
+                var digest = ReadActionOutput(context, container, "artifact-digest");
+                var artifactId = ReadActionOutput(context, container, "artifact-id");
+                string downloadUrl = null;
+
+                // actions/upload-artifact uses workflow_run_backend_id from the
+                // Actions.Results scope in ACTIONS_RUNTIME_TOKEN. This is NOT the
+                // public github.run_id. The standalone server stores files under a
+                // directory key derived from this ID (see ToArtifactServerRunKey),
+                // so the same key must be used to build a working download path.
+                var workflowRunBackendId = ReadWorkflowRunBackendId(context);
+                if (!String.IsNullOrWhiteSpace(workflowRunBackendId))
+                {
+                    var runKey = ToArtifactServerRunKey(workflowRunBackendId.Trim());
+                    var relativeArtifactPath = $"{runKey}/{artifactName}/{artifactName}.zip";
+                    var basePath = configuredUri.AbsolutePath.TrimEnd('/');
+                    var downloadBaseUri = new UriBuilder(configuredUri)
+                    {
+                        Path = $"{basePath}/local-artifacts/download",
+                        Query = String.Empty,
+                        Fragment = String.Empty
+                    }.Uri;
+                    downloadUrl = $"{downloadBaseUri.GetLeftPart(UriPartial.Path)}?path={Uri.EscapeDataString(relativeArtifactPath)}";
+                    Trace.Info($"Artifact summary download path key: '{relativeArtifactPath}'");
+                }
+                else
+                {
+                    Trace.Warning($"Could not determine the Actions.Results workflow-run backend ID for artifact '{artifactName}'; no download link was added");
+                }
+
+                // The table itself is drawn by the artifact server (see ArtifactSummaryCollector):
+                // job summaries cannot set font sizes, borders or alignment, so a 1:1 copy of
+                // GitHub's native Artifacts list is only possible as a server-rendered image.
+                var summaryRow = new ArtifactSummaryRow
+                {
+                    Name = artifactName,
+                    Size = size,
+                    Digest = String.IsNullOrWhiteSpace(digest) ? String.Empty : FormatDigestForDisplay(digest),
+                    DownloadUrl = downloadUrl
+                };
+                var rowKey = String.IsNullOrWhiteSpace(artifactId)
+                    ? Guid.NewGuid().ToString("N")
+                    : artifactId.Trim();
+
+                ArtifactSummaryCollector.Add(context.Root.Id, context.Id, rowKey, configuredUri.AbsoluteUri, summaryRow);
+                Trace.Info($"Collected artifact summary row for '{artifactName}' (download link available: {!String.IsNullOrWhiteSpace(downloadUrl)})");
+            }
+            catch (Exception ex)
+            {
+                // Summary rendering is best-effort and must not fail artifact uploads.
+                Trace.Warning($"Could not collect artifact row for the job summary: {ex.Message}");
+            }
+        }
+
+        private string ReadWorkflowRunBackendId(IExecutionContext context)
+        {
+            // The upload-artifact toolkit extracts these backend IDs from the
+            // "Actions.Results:<workflow-run-backend-id>:<workflow-job-run-backend-id>"
+            // scope in the runtime access token. Read only the run ID; never log the token.
+            foreach (var endpoint in context.Global.Endpoints)
+            {
+                if (!String.Equals(endpoint.Name, "SystemVssConnection", StringComparison.OrdinalIgnoreCase)
+                    || endpoint.Authorization?.Parameters == null
+                    || !endpoint.Authorization.Parameters.TryGetValue("AccessToken", out var accessToken)
+                    || String.IsNullOrWhiteSpace(accessToken))
+                {
+                    continue;
+                }
+
+                var tokenParts = accessToken.Split('.');
+                if (tokenParts.Length < 2)
+                {
+                    return null;
+                }
+
+                try
+                {
+                    var payload = tokenParts[1].Replace('-', '+').Replace('_', '/');
+                    payload = payload.PadRight(payload.Length + ((4 - payload.Length % 4) % 4), '=');
+                    using var document = JsonDocument.Parse(Convert.FromBase64String(payload));
+                    if (!document.RootElement.TryGetProperty("scp", out var scopeClaim))
+                    {
+                        return null;
+                    }
+
+                    var scopes = scopeClaim.GetString();
+                    if (String.IsNullOrWhiteSpace(scopes))
+                    {
+                        return null;
+                    }
+
+                    foreach (var scope in scopes.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        var parts = scope.Split(':');
+                        if (parts.Length == 3 && String.Equals(parts[0], "Actions.Results", StringComparison.Ordinal))
+                        {
+                            return parts[1];
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Trace.Warning($"Could not read Actions.Results IDs from the runtime token: {ex.Message}");
+                    return null;
+                }
+
+                return null;
+            }
+
+            return null;
+        }
+
+        private static string ReadActionOutput(IExecutionContext context, ContainerInfo container, string outputName)
+        {
+            // The output file is processed before the summary command. Prefer the parsed step output.
+            if (!String.IsNullOrEmpty(context.ContextName))
+            {
+                var scope = context.Global.StepsContext.GetScope(context.ScopeName);
+                if (scope.TryGetValue(context.ContextName, out var stepValue))
+                {
+                    var step = stepValue.AssertDictionary("step");
+                    if (step.TryGetValue("outputs", out var outputsValue))
+                    {
+                        var outputs = outputsValue.AssertDictionary("outputs");
+                        if (outputs.TryGetValue(outputName, out var outputValue))
+                        {
+                            return outputValue as StringContextData;
+                        }
+                    }
+                }
+            }
+
+            // Fallback to reading GITHUB_OUTPUT directly.
+            var outputPath = context.GetGitHubContext("output");
+            if (String.IsNullOrWhiteSpace(outputPath))
+            {
+                return null;
+            }
+
+            if (container != null)
+            {
+                outputPath = container.TranslateToHostPath(outputPath);
+            }
+
+            if (!File.Exists(outputPath))
+            {
+                return null;
+            }
+
+            var prefix = outputName + "=";
+            foreach (var line in File.ReadLines(outputPath))
+            {
+                if (line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    return line.Substring(prefix.Length);
+                }
+            }
+
+            return null;
+        }
+
+        private static string EscapeHtmlText(string value)
+        {
+            return (value ?? String.Empty)
+                .Replace("&", "&amp;")
+                .Replace("<", "&lt;")
+                .Replace(">", "&gt;")
+                .Replace("\"", "&quot;")
+                .Replace("'", "&#39;");
+        }
+
+        private static string EscapeHtmlAttribute(string value)
+        {
+            return EscapeHtmlText(value);
+        }
+
+        private static string FormatArtifactSize(long? sizeBytes)
+        {
+            if (!sizeBytes.HasValue || sizeBytes.Value < 0)
+            {
+                return "—";
+            }
+
+            // Up to two decimals with trailing zeros dropped, like "6.4 MB" / "6.03 MB".
+            var bytes = sizeBytes.Value;
+            if (bytes >= 1024 * 1024)
+            {
+                return $"{Math.Round(bytes / (1024d * 1024d), 2, MidpointRounding.AwayFromZero).ToString("0.##", CultureInfo.InvariantCulture)} MB";
+            }
+
+            if (bytes >= 1024)
+            {
+                return $"{Math.Round(bytes / 1024d, 2, MidpointRounding.AwayFromZero).ToString("0.##", CultureInfo.InvariantCulture)} KB";
+            }
+
+            return $"{bytes} B";
+        }
+
+        // GitHub shows the algorithm prefix plus the first 8 hex characters and an ellipsis.
+        private static string FormatDigestForDisplay(string digest)
+        {
+            var trimmed = digest.Trim();
+            var hexStart = trimmed.IndexOf(':') + 1;
+            return trimmed.Length - hexStart > 8
+                ? trimmed.Substring(0, hexStart + 8) + "…"
+                : trimmed;
+        }
+
+        // Mirrors the artifact server's directory key for a workflow_run_backend_id:
+        // numeric IDs are used as-is, any other (opaque/GUID) ID is stored under the
+        // signed 64-bit FNV-1a hash of the raw ID. Linking with the raw GUID gives a
+        // dead download link because that directory does not exist.
+        internal static string ToArtifactServerRunKey(string workflowRunBackendId)
+        {
+            if (long.TryParse(workflowRunBackendId, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var numeric))
+            {
+                return numeric.ToString(CultureInfo.InvariantCulture);
+            }
+
+            unchecked
+            {
+                ulong hash = 14695981039346656037UL;
+                foreach (var b in Encoding.UTF8.GetBytes(workflowRunBackendId))
+                {
+                    hash ^= b;
+                    hash *= 1099511628211UL;
+                }
+
+                return ((long)hash).ToString(CultureInfo.InvariantCulture);
+            }
+        }
+
         public void ProcessCommand(IExecutionContext context, string filePath, ContainerInfo container)
         {
-            if (String.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+            if (String.IsNullOrEmpty(filePath))
             {
-                Trace.Info($"Step Summary file ({filePath}) does not exist; skipping attachment upload");
+                Trace.Info("Step Summary file path is empty; skipping attachment upload");
                 return;
             }
 
             try
             {
+                AppendArtifactSummary(context, filePath, container);
+
+                if (!File.Exists(filePath))
+                {
+                    Trace.Info($"Step Summary file ({filePath}) does not exist; skipping attachment upload");
+                    return;
+                }
+
                 var fileSize = new FileInfo(filePath).Length;
                 if (fileSize == 0)
                 {
@@ -494,4 +789,130 @@ namespace GitHub.Runner.Worker
             return text.Substring(originalIndex, lfIndex - originalIndex);
         }
     }
+
+    internal sealed class ArtifactSummaryRow
+    {
+        public string Name { get; set; }
+        public string Size { get; set; }
+        public string Digest { get; set; }
+        public string DownloadUrl { get; set; }
+    }
+
+    internal static class ArtifactSummaryCollector
+    {
+        private sealed class JobSummaryState
+        {
+            public object Gate { get; } = new object();
+            public List<ArtifactSummaryRow> Rows { get; } = new List<ArtifactSummaryRow>();
+            public HashSet<string> ArtifactIds { get; } = new HashSet<string>(StringComparer.Ordinal);
+            public string BaseUrl { get; set; }
+            public Guid LastStepId { get; set; }
+        }
+
+        private static readonly ConcurrentDictionary<Guid, JobSummaryState> _jobs = new ConcurrentDictionary<Guid, JobSummaryState>();
+
+        public static void Add(Guid jobId, Guid stepId, string artifactId, string baseUrl, ArtifactSummaryRow row)
+        {
+            var state = _jobs.GetOrAdd(jobId, _ => new JobSummaryState());
+            lock (state.Gate)
+            {
+                if (state.ArtifactIds.Add(artifactId))
+                {
+                    state.Rows.Add(row);
+                }
+
+                state.BaseUrl = baseUrl;
+                state.LastStepId = stepId;
+            }
+        }
+
+        public static bool TryCreateSummary(Guid jobId, string tempDirectory, out string summaryPath, out Guid stepRecordId)
+        {
+            summaryPath = null;
+            stepRecordId = Guid.Empty;
+
+            if (!_jobs.TryGetValue(jobId, out var state))
+            {
+                return false;
+            }
+
+            ArtifactSummaryRow[] rows;
+            string baseUrl;
+            lock (state.Gate)
+            {
+                rows = state.Rows.ToArray();
+                baseUrl = state.BaseUrl;
+                stepRecordId = state.LastStepId;
+            }
+
+            if (rows.Length == 0 || stepRecordId == Guid.Empty || !Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri))
+            {
+                return false;
+            }
+
+            Directory.CreateDirectory(tempDirectory);
+            summaryPath = Path.Combine(tempDirectory, $"artifact-summary-{jobId:N}.md");
+
+            var basePath = baseUri.AbsolutePath.TrimEnd('/');
+            string IconUrl(string icon) => new UriBuilder(baseUri)
+            {
+                Path = $"{basePath}/local-artifacts/icon/{icon}.svg",
+                // GitHub's image proxy caches summary images by URL; bump v when an icon changes.
+                Query = "v=2",
+                Fragment = String.Empty
+            }.Uri.AbsoluteUri;
+            string Esc(string value) => (value ?? String.Empty).Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+            string Attr(string value) => Esc(value).Replace("\"", "&quot;");
+            string Icon(string icon, string alt) => $"<img src=\"{Attr(IconUrl(icon))}\" alt=\"{Attr(alt)}\" width=\"16\" height=\"16\" />";
+            string LinkTo(string url, string inner) => String.IsNullOrWhiteSpace(url)
+                ? inner
+                : $"<a href=\"{Attr(url)}\" style=\"color:inherit;text-decoration:none;\">{inner}</a>";
+
+            // Same structure and measurements as GitHub's native Artifacts box (h4 title, 12px
+            // muted subtitle, 14px table, 12px digest, borders only under the header and between
+            // rows). Both class and inline style are set; whatever the summary sanitizer keeps is
+            // applied, the rest falls back to a plain table with the same content.
+            const string headStyle = "padding:0 16px 8px 0;font-size:14px;font-weight:600;color:#59636e;text-align:left;border:0;border-bottom:1px solid #d1d9e0;";
+            const string cellStyle = "padding:12px 16px 12px 0;font-size:14px;vertical-align:middle;border:0;border-bottom:1px solid #d1d9e0;";
+            const string lastCellStyle = "padding:12px 16px 12px 0;font-size:14px;vertical-align:middle;border:0;";
+
+            var html = new StringBuilder();
+            html.AppendLine("<div class=\"Box border rounded\" style=\"border:1px solid #d1d9e0;border-radius:6px;padding:16px 16px 0;\">");
+            html.AppendLine("<h4 class=\"text-bold h4\" style=\"margin:0;font-size:16px;font-weight:600;\">Artifacts</h4>");
+            html.AppendLine("<div class=\"color-fg-muted text-small\" style=\"margin:0 0 12px;font-size:12px;color:#59636e;\">Produced during runtime</div>");
+            html.AppendLine("<table style=\"width:100%;table-layout:fixed;border-collapse:collapse;\">");
+            html.AppendLine("<thead><tr>");
+            html.AppendLine($"<th width=\"34%\" align=\"left\" style=\"{headStyle}\">Name</th>");
+            html.AppendLine($"<th width=\"16%\" align=\"left\" style=\"{headStyle}\">Size</th>");
+            html.AppendLine($"<th width=\"34%\" align=\"left\" style=\"{headStyle}\">Digest</th>");
+            html.AppendLine($"<th width=\"16%\" style=\"{headStyle}\"></th>");
+            html.AppendLine("</tr></thead>");
+            html.AppendLine("<tbody>");
+            for (var i = 0; i < rows.Length; i++)
+            {
+                var row = rows[i];
+                var style = i == rows.Length - 1 ? lastCellStyle : cellStyle;
+                var url = row.DownloadUrl;
+                var digestHtml = String.IsNullOrWhiteSpace(row.Digest)
+                    ? "—"
+                    : $"<code style=\"font-size:12px;\">{Esc(row.Digest)}</code>&nbsp;&nbsp;{Icon("copy", "Copy digest")}";
+
+                html.AppendLine("<tr>");
+                html.AppendLine($"<td style=\"{style}\">{LinkTo(url, Icon("package", "Artifact"))}&nbsp;&nbsp;{LinkTo(url, $"<b>{Esc(row.Name)}</b>")}</td>");
+                html.AppendLine($"<td style=\"{style}\">{Esc(row.Size)}</td>");
+                html.AppendLine($"<td style=\"{style}\">{digestHtml}</td>");
+                html.AppendLine($"<td align=\"right\" style=\"{style}padding-right:0;\">{LinkTo(url, Icon("download", "Download"))}&nbsp;&nbsp;{Icon("trash", "Delete")}</td>");
+                html.AppendLine("</tr>");
+            }
+
+            html.AppendLine("</tbody>");
+            html.AppendLine("</table>");
+            html.AppendLine("</div>");
+
+            File.WriteAllText(summaryPath, html.ToString(), new UTF8Encoding(false));
+            _jobs.TryRemove(jobId, out _);
+            return true;
+        }
+    }
+
 }

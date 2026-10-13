@@ -239,6 +239,14 @@ namespace GitHub.Runner.Worker.Handlers
                 Environment["ACTIONS_RESULTS_URL"] = resultsUrl;
             }
 
+            // Optional runner-host override for a self-hosted Actions Results service.
+            // Configure this variable on the runner host, not in individual workflows.
+            var resultsUrlOverride = System.Environment.GetEnvironmentVariable("ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE");
+            if (!string.IsNullOrWhiteSpace(resultsUrlOverride))
+            {
+                Environment["ACTIONS_RESULTS_URL"] = resultsUrlOverride;
+            }
+
             if (ExecutionContext.Global.Variables.TryGetValue("actions_cache_mode", out var cacheMode) && !string.IsNullOrEmpty(cacheMode))
             {
                 Environment["ACTIONS_CACHE_MODE"] = cacheMode;

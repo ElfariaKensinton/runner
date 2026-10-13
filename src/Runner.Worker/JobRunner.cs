@@ -271,6 +271,26 @@ namespace GitHub.Runner.Worker
             }
         }
 
+        private void QueueArtifactSummaryIfNeeded(IExecutionContext jobContext, Pipelines.AgentJobRequestMessage message)
+        {
+            try
+            {
+                if (ArtifactSummaryCollector.TryCreateSummary(
+                    jobContext.Id,
+                    HostContext.GetDirectory(WellKnownDirectory.Temp),
+                    out var artifactSummaryPath,
+                    out var artifactSummaryStepId))
+                {
+                    jobContext.QueueSummaryFile("artifact-summary", artifactSummaryPath, artifactSummaryStepId);
+                    Trace.Info($"Queued one consolidated artifact summary for job {message.JobId}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.Warning($"Could not queue consolidated artifact summary: {ex.Message}");
+            }
+        }
+
         private async Task<TaskResult> CompleteJobAsync(IRunnerService server, IExecutionContext jobContext, Pipelines.AgentJobRequestMessage message, TaskResult? taskResult = null)
         {
             if (server is IRunServer runServer)
@@ -290,6 +310,9 @@ namespace GitHub.Runner.Worker
         private async Task<TaskResult> CompleteJobAsync(IRunServer runServer, IExecutionContext jobContext, Pipelines.AgentJobRequestMessage message, TaskResult? taskResult = null)
         {
             jobContext.Debug($"Finishing: {message.JobDisplayName}");
+
+            QueueArtifactSummaryIfNeeded(jobContext, message);
+
             TaskResult result = jobContext.Complete(taskResult);
 
             var jobQueueTelemetry = await ShutdownQueue(throwOnFailure: false);
@@ -364,6 +387,7 @@ namespace GitHub.Runner.Worker
         private async Task<TaskResult> CompleteJobAsync(IJobServer jobServer, IExecutionContext jobContext, Pipelines.AgentJobRequestMessage message, TaskResult? taskResult = null)
         {
             jobContext.Debug($"Finishing: {message.JobDisplayName}");
+            QueueArtifactSummaryIfNeeded(jobContext, message);
             TaskResult result = jobContext.Complete(taskResult);
 
             if (_runnerSettings.DisableUpdate == true)
