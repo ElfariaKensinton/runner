@@ -290,6 +290,24 @@ namespace GitHub.Runner.Worker
         private async Task<TaskResult> CompleteJobAsync(IRunServer runServer, IExecutionContext jobContext, Pipelines.AgentJobRequestMessage message, TaskResult? taskResult = null)
         {
             jobContext.Debug($"Finishing: {message.JobDisplayName}");
+
+            try
+            {
+                if (ArtifactSummaryCollector.TryCreateSummary(
+                    jobContext.Id,
+                    HostContext.GetDirectory(WellKnownDirectory.Temp),
+                    out var artifactSummaryPath,
+                    out var artifactSummaryStepId))
+                {
+                    jobContext.QueueSummaryFile("artifact-summary", artifactSummaryPath, artifactSummaryStepId);
+                    Trace.Info($"Queued one consolidated artifact summary for job {message.JobId}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Trace.Warning($"Could not queue consolidated artifact summary: {ex.Message}");
+            }
+
             TaskResult result = jobContext.Complete(taskResult);
 
             var jobQueueTelemetry = await ShutdownQueue(throwOnFailure: false);
