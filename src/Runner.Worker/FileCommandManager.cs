@@ -257,12 +257,13 @@ namespace GitHub.Runner.Worker
                     return;
                 }
 
-                var artifactsPage = new UriBuilder(configuredUri)
+                var artifactUrl = ReadActionOutput(context, container, "artifact-url");
+                if (!Uri.TryCreate(artifactUrl, UriKind.Absolute, out var directArtifactUri)
+                    || (directArtifactUri.Scheme != Uri.UriSchemeHttp && directArtifactUri.Scheme != Uri.UriSchemeHttps))
                 {
-                    Path = "/artifacts",
-                    Query = String.Empty,
-                    Fragment = String.Empty
-                }.Uri.AbsoluteUri.TrimEnd('/');
+                    Trace.Warning("upload-artifact did not provide a valid artifact-url; skipping the artifact summary row");
+                    return;
+                }
 
                 var artifactName = "artifact";
                 if (context.ActionInputs?.TryGetValue("name", out var configuredArtifactName) == true
@@ -291,10 +292,10 @@ namespace GitHub.Runner.Worker
                 summary.AppendLine();
                 summary.AppendLine("| **Name** | **Size** | **Digest** |   |");
                 summary.AppendLine("| :--- | :--- | :--- | - |");
-                summary.AppendLine($"| [**{visibleArtifactName}**]({artifactsPage}) | {size} | {digestCell} |   |");
+                summary.AppendLine($"| [**{visibleArtifactName}**]({directArtifactUri.AbsoluteUri}) | {size} | {digestCell} |   |");
                 summary.AppendLine();
                 File.AppendAllText(filePath, summary.ToString());
-                Trace.Info($"Added artifact summary row for '{artifactName}' (artifact browser: {artifactsPage})");
+                Trace.Info($"Added artifact summary row for '{artifactName}' ({directArtifactUri.AbsoluteUri})");
             }
             catch (Exception ex)
             {
