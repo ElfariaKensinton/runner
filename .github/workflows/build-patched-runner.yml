@@ -5,14 +5,6 @@ on:
     branches: [feature/self-hosted-artifact-results-url]
   workflow_dispatch:
     inputs:
-      runner_type:
-        description: 'Where to run the macOS build jobs'
-        type: choice
-        required: true
-        default: github-hosted
-        options:
-          - github-hosted
-          - self-hosted
       push_to_release:
         description: 'Upload the built runner packages to a GitHub Release'
         type: boolean
@@ -29,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         runtime: [osx-x64, osx-arm64]
-    runs-on: ${{ inputs.runner_type == 'self-hosted' && fromJSON('["self-hosted", "macOS"]') || 'macos-latest' }}
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
       - name: Build runner layout
@@ -45,56 +37,6 @@ jobs:
           path: _package/*
           if-no-files-found: error
           retention-days: 3
-
-  artifact-summary:
-    name: Artifact summary
-    if: always() && needs.build.result == 'success'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: Render GitHub-style artifact list
-        uses: actions/github-script@v9
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              run_id: context.runId,
-              per_page: 100
-            });
-
-            const visible = artifacts.filter(a => !a.expired);
-            const lines = [
-              '## Artifacts',
-              '',
-              'Produced during runtime',
-              '',
-              '| **Name** | **Size** | **Digest** |   |',
-              '| :--- | :--- | :--- | - |'
-            ];
-
-            const formatSize = bytes => {
-              if (bytes >= 1024 * 1024) return `${Math.round(bytes / (1024 * 1024))} MB`;
-              if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
-              return `${bytes} B`;
-            };
-
-            for (const artifact of visible) {
-              const url = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}/artifacts/${artifact.id}`;
-              const name = artifact.name.replace(/\\\\/g, '\\\\\\\\').replace(/\\|/g, '\\\\|').replace(/\\[/g, '\\\\[').replace(/\\]/g, '\\\\]');
-              const digest = artifact.digest || '—';
-              lines.push(`| [**${name}**](${url}) | ${formatSize(artifact.size_in_bytes)} | \`${digest}\` |   |`);
-            }
-
-            if (visible.length === 0) {
-              lines.push('| No artifacts found | — | — |   |');
-            }
-
-            await core.summary.addRaw(lines.join('\\n')).write();
 
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.push_to_release
