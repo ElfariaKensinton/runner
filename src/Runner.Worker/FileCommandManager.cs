@@ -895,7 +895,9 @@ namespace GitHub.Runner.Worker
                     : $"<code style=\"font-size:12px;\">{Esc(row.Digest)}</code>&nbsp;&nbsp;{Icon("copy", "Copy digest")}";
 
                 html.AppendLine("<tr>");
-                html.AppendLine($"<td style=\"{style}\">{LinkTo(url, Icon("package", "Artifact"))}&nbsp;&nbsp;{LinkTo(url, $"<b>{Esc(row.Name)}</b>")}</td>");
+                var packageIcon = LinkTo(url, Icon("package", "Artifact"));
+                var artifactName = LinkTo(url, "<b>" + Esc(row.Name) + "</b>");
+                html.AppendLine($"<td style=\"{style}\">{packageIcon}&nbsp;&nbsp;{artifactName}</td>");
                 html.AppendLine($"<td style=\"{style}\">{Esc(row.Size)}</td>");
                 html.AppendLine($"<td style=\"{style}\">{digestHtml}</td>");
                 html.AppendLine($"<td align=\"right\" style=\"{style}padding-right:0;\">{LinkTo(url, Icon("download", "Download"))}&nbsp;&nbsp;{Icon("trash", "Delete")}</td>");
@@ -905,7 +907,7 @@ namespace GitHub.Runner.Worker
             html.AppendLine("</tbody>");
             html.AppendLine("</table>");
             html.AppendLine("</div>");
-            File.WriteAllText(summaryPath, summary, new UTF8Encoding(false));
+            File.WriteAllText(summaryPath, html.ToString(), new UTF8Encoding(false));
             _jobs.TryRemove(jobId, out _);
             return true;
         }
