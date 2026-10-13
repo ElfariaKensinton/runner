@@ -12,7 +12,7 @@ Restart the runner after changing its service environment. Existing workflows an
 
 The endpoint must implement the GitHub Actions Results API v4 protocol and support the exact artifact action version in use. This runner patch alone does not provide that service. Do not expose an untested artifact server directly to the public internet; use HTTPS and restrict access while validating compatibility.
 
-When `actions/upload-artifact` runs with this override, the patched runner adds an **Artifacts** table to that step's GitHub summary. Each upload is shown by its artifact name, with a download link that opens the server's `/artifacts` browser. This makes the artifact entries visible in the summary instead of showing a generic **Browse and download artifacts** link. The external files still do not populate GitHub's built-in **Actions → Artifacts** collection.
+When `actions/upload-artifact` runs with this override, the patched runner adds an **Artifacts** table to that step's GitHub summary using the `Name`, `Size`, and `Digest` columns. The row uses the action's `artifact-url` and `artifact-digest` outputs, and takes the uploaded archive size from the action's final-size log line. The external files still do not populate GitHub's built-in **Actions → Artifacts** collection, so the configured Results service must make the generated artifact URL reachable for the row's download link to work.
 
 
 ## Publishing to a GitHub Release
