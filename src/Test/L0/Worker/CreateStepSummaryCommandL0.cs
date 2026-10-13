@@ -162,13 +162,22 @@ namespace GitHub.Runner.Common.Tests.Worker
                         ["name"] = "patched-runner-osx-arm64"
                     });
                     _executionContext.SetupGet(x => x.UploadedArtifactSizeBytes).Returns(128L * 1024 * 1024);
+                    var artifactSummaryStepId = Guid.NewGuid();
+                    _executionContext.SetupGet(x => x.Id).Returns(artifactSummaryStepId);
 
                     var stepSummaryFile = Path.Combine(_rootDirectory, "artifact-summary");
                     WriteContent(stepSummaryFile, new List<string> { "# Upload results" });
 
                     _createStepCommand.ProcessCommand(_executionContext.Object, stepSummaryFile, null);
 
-                    var summary = File.ReadAllText(stepSummaryFile);
+                    Assert.True(ArtifactSummaryCollector.TryCreateSummary(
+                        _jobExecutionContext.Id,
+                        _rootDirectory,
+                        out var artifactSummaryPath,
+                        out var summaryStepId));
+                    Assert.Equal(artifactSummaryStepId, summaryStepId);
+
+                    var summary = File.ReadAllText(artifactSummaryPath);
                     Assert.Contains("Produced during runtime", summary);
                     Assert.Contains("<b>patched-runner-osx-arm64</b>", summary);
                     Assert.Contains("128 MB", summary);
