@@ -53,9 +53,6 @@ namespace GitHub.Runner.Worker
         CancellationToken CancellationToken { get; }
         GlobalContext Global { get; }
 
-        // Evaluated inputs for the action running in this step; used by file-command post-processing.
-        Dictionary<string, string> ActionInputs { get; set; }
-
         Dictionary<string, string> IntraActionState { get; }
         Dictionary<string, VariableValue> JobOutputs { get; }
         ActionsEnvironmentReference ActionsEnvironment { get; }
@@ -217,9 +214,6 @@ namespace GitHub.Runner.Worker
 
         // Shared pointer across job-level execution context and step-level execution contexts
         public GlobalContext Global { get; private set; }
-
-        // Evaluated inputs for this step's action. Kept step-scoped so concurrent/background steps do not collide.
-        public Dictionary<string, string> ActionInputs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
         // Only job level ExecutionContext has JobSteps
         public Queue<IStep> JobSteps { get; private set; }
