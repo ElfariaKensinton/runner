@@ -8,6 +8,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 
 namespace GitHub.Runner.Worker
 {
@@ -288,29 +289,24 @@ namespace GitHub.Runner.Worker
                     ? "—"
                     : $"`{EscapeMarkdownTableCell(digest.Trim())}`";
                 var artifactId = ReadActionOutput(context, container, "artifact-id");
-                var artifactUrl = ReadActionOutput(context, container, "artifact-url");
                 string downloadUrl = null;
 
-                // The standalone artifact server stores v4 artifacts at
-                // <run-id>/<artifact-name>/<artifact-name>.zip and exposes a stable
-                // download endpoint. Do not depend on action outputs being populated
-                // or use /artifacts/{id}/download, which this server does not expose.
-                var runId = context.GetGitHubContext("run_id");
-                if (!String.IsNullOrWhiteSpace(runId))
+                // actions/upload-artifact uses workflow_run_backend_id from the
+                // Actions.Results scope in ACTIONS_RUNTIME_TOKEN. This is NOT the
+                // public github.run_id; the standalone server stores files under
+                // this backend ID, so use it to build the real download path.
+                var workflowRunBackendId = ReadWorkflowRunBackendId(context);
+                if (!String.IsNullOrWhiteSpace(workflowRunBackendId))
                 {
-                    var relativeArtifactPath = $"{runId.Trim()}/{artifactName}/{artifactName}.zip";
+                    var relativeArtifactPath = $"{workflowRunBackendId}/{artifactName}/{artifactName}.zip";
                     var basePath = configuredUri.AbsolutePath.TrimEnd('/');
-                    downloadUrl = new UriBuilder(configuredUri)
+                    var downloadBaseUri = new UriBuilder(configuredUri)
                     {
                         Path = $"{basePath}/local-artifacts/download",
-                        Query = $"path={Uri.EscapeDataString(relativeArtifactPath)}",
+                        Query = String.Empty,
                         Fragment = String.Empty
-                    }.Uri.AbsoluteUri;
-                }
-                else if (Uri.TryCreate(artifactUrl, UriKind.Absolute, out var artifactUri)
-                    && (artifactUri.Scheme == Uri.UriSchemeHttp || artifactUri.Scheme == Uri.UriSchemeHttps))
-                {
-                    downloadUrl = artifactUri.AbsoluteUri;
+                    }.Uri;
+                    downloadUrl = $"{downloadBaseUri.GetLeftPart(UriPartial.Path)}?path={Uri.EscapeDataString(relativeArtifactPath)}";
                 }
 
                 // The filename remains clickable; the separate final column contains the download icon.
@@ -327,7 +323,7 @@ namespace GitHub.Runner.Worker
 
                 if (String.IsNullOrWhiteSpace(downloadUrl))
                 {
-                    Trace.Warning($"Artifact '{artifactName}' did not expose artifact-id or a usable artifact-url");
+                    Trace.Warning($"Could not determine the Actions.Results workflow-run backend ID for artifact '{artifactName}'; no download link was added");
                 }
 
                 var row = $"| {nameCell} | {size} | {digestCell} | {downloadCell} |";
@@ -343,6 +339,64 @@ namespace GitHub.Runner.Worker
                 // Summary rendering is best-effort and must not fail artifact uploads.
                 Trace.Warning($"Could not collect artifact row for the job summary: {ex.Message}");
             }
+        }
+
+        private static string ReadWorkflowRunBackendId(IExecutionContext context)
+        {
+            // The upload-artifact toolkit extracts these backend IDs from the
+            // "Actions.Results:<workflow-run-backend-id>:<workflow-job-run-backend-id>"
+            // scope in the runtime access token. Read only the run ID; never log the token.
+            foreach (var endpoint in context.Global.Endpoints)
+            {
+                if (!String.Equals(endpoint.Name, "SystemVssConnection", StringComparison.OrdinalIgnoreCase)
+                    || endpoint.Authorization?.Parameters == null
+                    || !endpoint.Authorization.Parameters.TryGetValue("AccessToken", out var accessToken)
+                    || String.IsNullOrWhiteSpace(accessToken))
+                {
+                    continue;
+                }
+
+                var tokenParts = accessToken.Split('.');
+                if (tokenParts.Length < 2)
+                {
+                    return null;
+                }
+
+                try
+                {
+                    var payload = tokenParts[1].Replace('-', '+').Replace('_', '/');
+                    payload = payload.PadRight(payload.Length + ((4 - payload.Length % 4) % 4), '=');
+                    using var document = JsonDocument.Parse(Convert.FromBase64String(payload));
+                    if (!document.RootElement.TryGetProperty("scp", out var scopeClaim))
+                    {
+                        return null;
+                    }
+
+                    var scopes = scopeClaim.GetString();
+                    if (String.IsNullOrWhiteSpace(scopes))
+                    {
+                        return null;
+                    }
+
+                    foreach (var scope in scopes.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        var parts = scope.Split(':');
+                        if (parts.Length == 3 && String.Equals(parts[0], "Actions.Results", StringComparison.Ordinal))
+                        {
+                            return parts[1];
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Trace.Warning($"Could not read Actions.Results IDs from the runtime token: {ex.Message}");
+                    return null;
+                }
+
+                return null;
+            }
+
+            return null;
         }
 
         private static string ReadActionOutput(IExecutionContext context, ContainerInfo container, string outputName)
