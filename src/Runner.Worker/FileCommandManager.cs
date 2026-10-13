@@ -310,7 +310,7 @@ namespace GitHub.Runner.Worker
 
                 // Match the supplied GitHub-style card markup. Icon images use the
                 // artifact server's SVG endpoint so they survive job-summary sanitizing.
-                var packageIcon = BuildIconImage(configuredUri, "package", "Artifact");
+                var packageIcon = BuildPackageOutlineIcon();
                 var linkedPackageIcon = String.IsNullOrWhiteSpace(downloadUrl)
                     ? packageIcon
                     : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" style=\"color: #24292f; text-decoration: none; cursor: pointer;\">{packageIcon}</a>";
@@ -506,6 +506,12 @@ namespace GitHub.Runner.Worker
             return trimmed.Length - hexStart > 8
                 ? trimmed.Substring(0, hexStart + 8) + "…"
                 : trimmed;
+        }
+
+        private static string BuildPackageOutlineIcon()
+        {
+            // Keep the cube hollow and fixed at 16px even when the surrounding table gets narrow.
+            return "<svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"color: #57606a; flex-shrink: 0; min-width: 16px;\"><path d=\"M1.75 4.75L8 1.5L14.25 4.75V11.25L8 14.5L1.75 11.25V4.75Z\" /><path d=\"M1.75 4.75L8 8L14.25 4.75\" /><path d=\"M8 8V14.5\" /></svg>";
         }
 
         private static string BuildIconImage(Uri configuredUri, string icon, string alt)
