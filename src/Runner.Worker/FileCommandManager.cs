@@ -3,6 +3,7 @@ using GitHub.Runner.Worker.Container;
 using GitHub.Runner.Common;
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Globalization;
 using System.Text;
@@ -232,15 +233,10 @@ namespace GitHub.Runner.Worker
         {
             try
             {
-                // The Results URL override sends upload-artifact data to an external service,
-                // so GitHub's native artifact catalogue cannot render these entries for us.
+                // External Results URL artifacts do not appear in GitHub's native artifact list.
+                // Collect their rows here and publish one consolidated table when the job ends.
                 var configuredResultsUrl = Environment.GetEnvironmentVariable("ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE");
-                if (String.IsNullOrWhiteSpace(configuredResultsUrl))
-                {
-                    return;
-                }
-
-                if (!context.IsArtifactUploadAction)
+                if (String.IsNullOrWhiteSpace(configuredResultsUrl) || !context.IsArtifactUploadAction)
                 {
                     return;
                 }
@@ -252,7 +248,6 @@ namespace GitHub.Runner.Worker
                     return;
                 }
 
-                // The row shows a plain bold filename and puts the direct download link in the last column.
                 var artifactName = "artifact";
                 if (context.ActionInputs?.TryGetValue("name", out var configuredArtifactName) == true
                     && !String.IsNullOrWhiteSpace(configuredArtifactName))
@@ -270,41 +265,36 @@ namespace GitHub.Runner.Worker
                 var digest = ReadActionOutput(context, container, "artifact-digest");
                 var digestCell = String.IsNullOrWhiteSpace(digest)
                     ? "—"
-                    : $"`{EscapeMarkdownTableCell(digest.Trim())}`";
+                    : $"\`{EscapeMarkdownTableCell(digest.Trim())}\`";
                 var artifactId = ReadActionOutput(context, container, "artifact-id");
                 var downloadCell = String.Empty;
                 if (!String.IsNullOrWhiteSpace(artifactId))
                 {
                     var downloadUrl = new UriBuilder(configuredUri)
                     {
-                        Path = $"/artifacts/{artifactId.Trim()}/download",
+                        Path = $"/artifacts/{Uri.EscapeDataString(artifactId.Trim())}/download",
                         Query = String.Empty,
                         Fragment = String.Empty
                     }.Uri.AbsoluteUri;
-                    downloadCell = $"[⬇]({downloadUrl} \"Download artifact\")";
+                    downloadCell = $"[⬇️]({downloadUrl} \"Download artifact\")";
                 }
                 else
                 {
                     Trace.Warning($"Artifact '{artifactName}' did not expose artifact-id; leaving its download cell empty");
                 }
 
-                var summary = new StringBuilder();
-                summary.AppendLine();
-                summary.AppendLine("## Artifacts");
-                summary.AppendLine();
-                summary.AppendLine("Produced during runtime");
-                summary.AppendLine();
-                summary.AppendLine("| **Name** | **Size** | **Digest** |   |");
-                summary.AppendLine("| :--- | :--- | :--- | - |");
-                summary.AppendLine($"| **{visibleArtifactName}** | {size} | {digestCell} | {downloadCell} |");
-                summary.AppendLine();
-                File.AppendAllText(filePath, summary.ToString());
-                Trace.Info($"Added artifact summary row for '{artifactName}' (download link available: {!String.IsNullOrWhiteSpace(downloadCell)})");
+                var row = $"| **{visibleArtifactName}** | {size} | {digestCell} | {downloadCell} |";
+                var rowKey = String.IsNullOrWhiteSpace(artifactId)
+                    ? Guid.NewGuid().ToString("N")
+                    : artifactId.Trim();
+
+                ArtifactSummaryCollector.Add(context.Root.Id, context.Id, rowKey, row);
+                Trace.Info($"Collected artifact summary row for '{artifactName}' (download link available: {!String.IsNullOrWhiteSpace(downloadCell)})");
             }
             catch (Exception ex)
             {
                 // Summary rendering is best-effort and must not fail artifact uploads.
-                Trace.Warning($"Could not add artifact row to step summary: {ex.Message}");
+                Trace.Warning($"Could not collect artifact row for the job summary: {ex.Message}");
             }
         }
 
@@ -648,4 +638,74 @@ namespace GitHub.Runner.Worker
             return text.Substring(originalIndex, lfIndex - originalIndex);
         }
     }
+
+    internal static class ArtifactSummaryCollector
+    {
+        private sealed class JobSummaryState
+        {
+            public object Gate { get; } = new object();
+            public List<string> Rows { get; } = new List<string>();
+            public HashSet<string> ArtifactIds { get; } = new HashSet<string>(StringComparer.Ordinal);
+            public Guid LastStepId { get; set; }
+        }
+
+        private static readonly ConcurrentDictionary<Guid, JobSummaryState> _jobs = new ConcurrentDictionary<Guid, JobSummaryState>();
+
+        public static void Add(Guid jobId, Guid stepId, string artifactId, string markdownRow)
+        {
+            var state = _jobs.GetOrAdd(jobId, _ => new JobSummaryState());
+            lock (state.Gate)
+            {
+                if (state.ArtifactIds.Add(artifactId))
+                {
+                    state.Rows.Add(markdownRow);
+                }
+
+                state.LastStepId = stepId;
+            }
+        }
+
+        public static bool TryCreateSummary(Guid jobId, string tempDirectory, out string summaryPath, out Guid stepRecordId)
+        {
+            summaryPath = null;
+            stepRecordId = Guid.Empty;
+
+            if (!_jobs.TryGetValue(jobId, out var state))
+            {
+                return false;
+            }
+
+            string[] rows;
+            lock (state.Gate)
+            {
+                rows = state.Rows.ToArray();
+                stepRecordId = state.LastStepId;
+            }
+
+            if (rows.Length == 0 || stepRecordId == Guid.Empty)
+            {
+                return false;
+            }
+
+            Directory.CreateDirectory(tempDirectory);
+            summaryPath = Path.Combine(tempDirectory, $"artifact-summary-{jobId:N}.md");
+
+            var summary = new StringBuilder();
+            summary.AppendLine("## Artifacts");
+            summary.AppendLine();
+            summary.AppendLine("Produced during runtime");
+            summary.AppendLine();
+            summary.AppendLine("| **Name** | **Size** | **Digest** | **Download** |");
+            summary.AppendLine("| :--- | :--- | :--- | :--- |");
+            foreach (var row in rows)
+            {
+                summary.AppendLine(row);
+            }
+
+            File.WriteAllText(summaryPath, summary.ToString(), new UTF8Encoding(false));
+            _jobs.TryRemove(jobId, out _);
+            return true;
+        }
+    }
+
 }
