@@ -4,6 +4,7 @@ using GitHub.Runner.Common;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Globalization;
 using System.Text;
 
 namespace GitHub.Runner.Worker
@@ -131,6 +132,144 @@ namespace GitHub.Runner.Worker
 
         public Type ExtensionType => typeof(IFileCommandExtension);
 
+        private void AppendArtifactSummary(IExecutionContext context, string filePath, ContainerInfo container)
+        {
+            try
+            {
+                // The Results URL override sends upload-artifact data to an external service,
+                // so GitHub's native artifact catalogue cannot render these entries for us.
+                var configuredResultsUrl = Environment.GetEnvironmentVariable("ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE");
+                if (String.IsNullOrWhiteSpace(configuredResultsUrl))
+                {
+                    return;
+                }
+
+                var actionContext = context.GetGitHubContext("action") ?? String.Empty;
+                var telemetryAction = context.StepTelemetry?.Action ?? String.Empty;
+                var isArtifactUpload = actionContext.IndexOf("upload-artifact", StringComparison.OrdinalIgnoreCase) >= 0
+                    || (telemetryAction.IndexOf("upload", StringComparison.OrdinalIgnoreCase) >= 0
+                        && telemetryAction.IndexOf("artifact", StringComparison.OrdinalIgnoreCase) >= 0);
+                if (!isArtifactUpload)
+                {
+                    return;
+                }
+
+                if (!Uri.TryCreate(configuredResultsUrl, UriKind.Absolute, out var configuredUri)
+                    || (configuredUri.Scheme != Uri.UriSchemeHttp && configuredUri.Scheme != Uri.UriSchemeHttps))
+                {
+                    Trace.Warning("ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE is not a valid HTTP(S) URL; skipping external artifact summary table");
+                    return;
+                }
+
+                var artifactsPage = new UriBuilder(configuredUri)
+                {
+                    Path = "/artifacts",
+                    Query = String.Empty,
+                    Fragment = String.Empty
+                }.Uri.AbsoluteUri.TrimEnd('/');
+
+                var artifactName = "artifact";
+                if (context.ActionInputs?.TryGetValue("name", out var configuredArtifactName) == true
+                    && !String.IsNullOrWhiteSpace(configuredArtifactName))
+                {
+                    artifactName = configuredArtifactName.Trim();
+                }
+                else if (context.ActionInputs?.TryGetValue("artifactName", out configuredArtifactName) == true
+                    && !String.IsNullOrWhiteSpace(configuredArtifactName))
+                {
+                    artifactName = configuredArtifactName.Trim();
+                }
+
+                var visibleArtifactName = EscapeMarkdownTableCell(artifactName);
+                var size = FormatArtifactSize(context.UploadedArtifactSizeBytes);
+                var digest = ReadActionOutput(context, container, "artifact-digest");
+                var digestCell = String.IsNullOrWhiteSpace(digest)
+                    ? "—"
+                    : $"\`{EscapeMarkdownTableCell(digest.Trim())}\`";
+
+                var summary = new StringBuilder();
+                summary.AppendLine();
+                summary.AppendLine("## Artifacts");
+                summary.AppendLine();
+                summary.AppendLine("Produced during runtime");
+                summary.AppendLine();
+                summary.AppendLine("| **Name** | **Size** | **Digest** |   |");
+                summary.AppendLine("| :--- | :--- | :--- | - |");
+                summary.AppendLine($"| [**{visibleArtifactName}**]({artifactsPage}) | {size} | {digestCell} |   |");
+                summary.AppendLine();
+                File.AppendAllText(filePath, summary.ToString());
+                Trace.Info($"Added artifact summary row for '{artifactName}' (artifact browser: {artifactsPage})");
+            }
+            catch (Exception ex)
+            {
+                // Summary rendering is best-effort and must not fail artifact uploads.
+                Trace.Warning($"Could not add artifact row to step summary: {ex.Message}");
+            }
+        }
+
+        private static string ReadActionOutput(IExecutionContext context, ContainerInfo container, string outputName)
+        {
+            var outputPath = context.GetGitHubContext("output");
+            if (String.IsNullOrWhiteSpace(outputPath))
+            {
+                return null;
+            }
+
+            if (container != null)
+            {
+                outputPath = container.TranslateToHostPath(outputPath);
+            }
+
+            if (!File.Exists(outputPath))
+            {
+                return null;
+            }
+
+            var prefix = outputName + "=";
+            foreach (var line in File.ReadLines(outputPath))
+            {
+                if (line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    return line.Substring(prefix.Length);
+                }
+            }
+
+            return null;
+        }
+
+        private static string FormatArtifactSize(long? sizeBytes)
+        {
+            if (!sizeBytes.HasValue || sizeBytes.Value < 0)
+            {
+                return "—";
+            }
+
+            var bytes = sizeBytes.Value;
+            if (bytes >= 1024 * 1024)
+            {
+                return $"{Math.Round(bytes / (1024d * 1024d), MidpointRounding.AwayFromZero).ToString("0", CultureInfo.InvariantCulture)} MB";
+            }
+
+            if (bytes >= 1024)
+            {
+                return $"{Math.Round(bytes / 1024d, MidpointRounding.AwayFromZero).ToString("0", CultureInfo.InvariantCulture)} KB";
+            }
+
+            return $"{bytes} B";
+        }
+
+        private static string EscapeMarkdownTableCell(string value)
+        {
+            return (value ?? String.Empty)
+                .Replace("\\", "\\\\")
+                .Replace("|", "\\|")
+                .Replace("[", "\\[")
+                .Replace("]", "\\]")
+                .Replace("`", "\\`")
+                .Replace("\r", " ")
+                .Replace("\n", " ");
+        }
+
         public void ProcessCommand(IExecutionContext context, string filePath, ContainerInfo container)
         {
             if (File.Exists(filePath))
@@ -237,6 +376,8 @@ namespace GitHub.Runner.Worker
 
             try
             {
+                AppendArtifactSummary(context, filePath, container);
+
                 if (!File.Exists(filePath))
                 {
                     Trace.Info($"Step Summary file ({filePath}) does not exist; skipping attachment upload");
