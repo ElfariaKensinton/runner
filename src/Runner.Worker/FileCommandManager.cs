@@ -281,7 +281,7 @@ namespace GitHub.Runner.Worker
                 var digest = ReadActionOutput(context, container, "artifact-digest");
                 var digestCell = String.IsNullOrWhiteSpace(digest)
                     ? "—"
-                    : $"\`{EscapeMarkdownTableCell(digest.Trim())}\`";
+                    : $"`{EscapeMarkdownTableCell(digest.Trim())}`";
 
                 var summary = new StringBuilder();
                 summary.AppendLine();
