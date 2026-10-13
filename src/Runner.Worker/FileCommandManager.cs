@@ -290,6 +290,7 @@ namespace GitHub.Runner.Worker
                     : $"`{EscapeMarkdownTableCell(digest.Trim())}`";
                 var artifactId = ReadActionOutput(context, container, "artifact-id");
                 string downloadUrl = null;
+                string nameImageUrl = null;
 
                 // actions/upload-artifact uses workflow_run_backend_id from the
                 // Actions.Results scope in ACTIONS_RUNTIME_TOKEN. This is NOT the
@@ -307,14 +308,23 @@ namespace GitHub.Runner.Worker
                         Fragment = String.Empty
                     }.Uri;
                     downloadUrl = $"{downloadBaseUri.GetLeftPart(UriPartial.Path)}?path={Uri.EscapeDataString(relativeArtifactPath)}";
+                    var labelUri = new UriBuilder(configuredUri)
+                    {
+                        Path = $"{basePath}/local-artifacts/name.svg",
+                        Query = $"name={Uri.EscapeDataString(artifactName)}",
+                        Fragment = String.Empty
+                    };
+                    nameImageUrl = labelUri.Uri.AbsoluteUri;
                     Trace.Info($"Artifact summary download path key: '{relativeArtifactPath}'");
                 }
 
                 // The filename remains clickable; the separate final column contains the download icon.
                 // GitHub may sanitize inline styles in job summaries, but preserve the intended styling here.
-                var nameCell = String.IsNullOrWhiteSpace(downloadUrl)
+                // Render the filename as an SVG image so GitHub's summary HTML sanitizer
+                // cannot turn its black, no-underline styling back into a default blue link.
+                var nameCell = String.IsNullOrWhiteSpace(downloadUrl) || String.IsNullOrWhiteSpace(nameImageUrl)
                     ? $"**{visibleArtifactName}**"
-                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" style=\"color: #000 !important; text-decoration: none !important;\"><strong>{EscapeHtmlText(artifactName).Replace("|", "&#124;")}</strong></a>";
+                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" title=\"Download {EscapeHtmlAttribute(artifactName)}\"><img src=\"{EscapeHtmlAttribute(nameImageUrl)}\" alt=\"{EscapeHtmlAttribute(artifactName)}\" /></a>";
                 // Use the official Primer download octicon as an image: GitHub's Markdown
                 // sanitizer does not preserve inline SVG, but HTTPS images are supported.
                 // The fourth Markdown-table column is center-aligned below.
