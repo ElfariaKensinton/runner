@@ -12,4 +12,9 @@ Restart the runner after changing its service environment. Existing workflows an
 
 The endpoint must implement the GitHub Actions Results API v4 protocol and support the exact artifact action version in use. This runner patch alone does not provide that service. Do not expose an untested artifact server directly to the public internet; use HTTPS and restrict access while validating compatibility.
 
-When `actions/upload-artifact` runs with this override, the patched runner adds a **Browse and download artifacts** link to that step's summary. The link opens the local server's `/artifacts` page. These external files do not populate GitHub's built-in **Actions → Artifacts** collection; GitHub's public artifact REST API supports listing, downloading, retrieving, and deleting artifacts, but not registering a file stored on an external server.
+When `actions/upload-artifact` runs with this override, the patched runner adds an **Artifacts** table to that step's GitHub summary. Each upload is shown by its artifact name, with a download link that opens the server's `/artifacts` browser. This makes the artifact entries visible in the summary instead of showing a generic **Browse and download artifacts** link. The external files still do not populate GitHub's built-in **Actions → Artifacts** collection.
+
+
+## Publishing to a GitHub Release
+
+When running **Runner CD** manually from GitHub Actions, use the **push_to_release** checkbox to control publishing. Leave it unchecked to build and upload workflow artifacts without creating a GitHub Release; check it to create the release and publish the platform packages. Pushes that update `releaseVersion` on `main` or a `releases/*` branch continue to publish automatically.

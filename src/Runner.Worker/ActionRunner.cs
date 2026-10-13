@@ -236,6 +236,10 @@ namespace GitHub.Runner.Worker
                 }
             }
 
+            // Keep the evaluated inputs available to file-command processing after the action exits.
+            // In particular, upload-artifact's name is needed to render a useful step-summary entry.
+            ExecutionContext.ActionInputs = new Dictionary<string, string>(inputs, StringComparer.OrdinalIgnoreCase);
+
             // Load the action environment.
             ExecutionContext.Debug("Loading env");
             var environment = new Dictionary<String, String>(VarUtil.EnvironmentVariableKeyComparer);

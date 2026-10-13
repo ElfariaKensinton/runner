@@ -137,6 +137,47 @@ namespace GitHub.Runner.Common.Tests.Worker
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", "Worker")]
+        public void CreateStepSummaryCommand_RendersArtifactRowForUploadAction()
+        {
+            const string resultsUrlVariable = "ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE";
+            var originalResultsUrl = Environment.GetEnvironmentVariable(resultsUrlVariable);
+            try
+            {
+                Environment.SetEnvironmentVariable(resultsUrlVariable, "https://artifacts.example.net/");
+
+                using (var hostContext = Setup())
+                {
+                    _executionContext.Setup(x => x.GetGitHubContext("action"))
+                        .Returns("actions/upload-artifact");
+                    _executionContext.SetupGet(x => x.ActionInputs)
+                        .Returns(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["name"] = "runner-linux-x64"
+                        });
+
+                    var stepSummaryFile = Path.Combine(_rootDirectory, "artifact-summary");
+                    WriteContent(stepSummaryFile, new List<string> { "# Upload results" });
+
+                    _createStepCommand.ProcessCommand(_executionContext.Object, stepSummaryFile, null);
+
+                    var summary = File.ReadAllText(stepSummaryFile);
+                    Assert.Contains("### Artifacts", summary);
+                    Assert.Contains("| [runner-linux-x64](https://artifacts.example.net/artifacts) | [Download](https://artifacts.example.net/artifacts) |", summary);
+                    Assert.DoesNotContain("Browse and download artifacts", summary);
+
+                    _jobExecutionContext.Complete();
+                    Assert.Equal(0, _issues.Count);
+                }
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable(resultsUrlVariable, originalResultsUrl);
+            }
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
         public void CreateStepSummaryCommand_ScrubSecrets()
         {
             using (var hostContext = Setup())
