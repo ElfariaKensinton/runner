@@ -315,19 +315,22 @@ namespace GitHub.Runner.Worker
                 // renders summary images through its image proxy, which needs a public
                 // URL with an image content type. The copy and delete icons are visual only:
                 // job summaries cannot run scripts.
-                var nameCell = $"{BuildIconImage(configuredUri, "package", "Artifact")} **{visibleArtifactName}**";
+                // Summaries cannot set CSS, so <small> brings the text down to about
+                // GitHub's native 14px and &nbsp; spaces out the icons.
+                var nameCell = $"{BuildIconImage(configuredUri, "package", "Artifact")}&nbsp;&nbsp;<small><b>{EscapeHtmlText(artifactName)}</b></small>";
+                var sizeCell = $"<small>{size}</small>";
                 var digestCell = String.IsNullOrWhiteSpace(digest)
-                    ? "—"
-                    : $"`{EscapeMarkdownTableCell(FormatDigestForDisplay(digest))}` {BuildIconImage(configuredUri, "copy", "Copy digest")}";
+                    ? "<small>—</small>"
+                    : $"<code>{EscapeHtmlText(FormatDigestForDisplay(digest))}</code>&nbsp;&nbsp;&nbsp;{BuildIconImage(configuredUri, "copy", "Copy digest")}";
                 var downloadCell = String.IsNullOrWhiteSpace(downloadUrl)
-                    ? "—"
-                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" title=\"Download artifact\">{BuildIconImage(configuredUri, "download", "Download")}</a> {BuildIconImage(configuredUri, "trash", "Delete")}";
+                    ? "<small>—</small>"
+                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" title=\"Download artifact\">{BuildIconImage(configuredUri, "download", "Download")}</a>&nbsp;&nbsp;&nbsp;&nbsp;{BuildIconImage(configuredUri, "trash", "Delete")}";
                 if (String.IsNullOrWhiteSpace(downloadUrl))
                 {
                     Trace.Warning($"Could not determine the Actions.Results workflow-run backend ID for artifact '{artifactName}'; no download link was added");
                 }
 
-                var row = $"| {nameCell} | {size} | {digestCell} | {downloadCell} |";
+                var row = $"| {nameCell} | {sizeCell} | {digestCell} | {downloadCell} |";
                 var rowKey = String.IsNullOrWhiteSpace(artifactId)
                     ? Guid.NewGuid().ToString("N")
                     : artifactId.Trim();
@@ -876,7 +879,7 @@ namespace GitHub.Runner.Worker
             summary.AppendLine();
             summary.AppendLine("Produced during runtime");
             summary.AppendLine();
-            summary.AppendLine("| Name | Size | Digest | |");
+            summary.AppendLine("| <small>Name</small> | <small>Size</small> | <small>Digest</small> | |");
             summary.AppendLine("| :--- | :--- | :--- | :---: |");
             foreach (var row in rows)
             {
