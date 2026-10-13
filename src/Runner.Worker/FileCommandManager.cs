@@ -240,12 +240,7 @@ namespace GitHub.Runner.Worker
                     return;
                 }
 
-                var actionContext = context.GetGitHubContext("action") ?? String.Empty;
-                var telemetryAction = context.StepTelemetry?.Action ?? String.Empty;
-                var isArtifactUpload = actionContext.IndexOf("upload-artifact", StringComparison.OrdinalIgnoreCase) >= 0
-                    || (telemetryAction.IndexOf("upload", StringComparison.OrdinalIgnoreCase) >= 0
-                        && telemetryAction.IndexOf("artifact", StringComparison.OrdinalIgnoreCase) >= 0);
-                if (!isArtifactUpload)
+                if (!context.IsArtifactUploadAction)
                 {
                     return;
                 }
@@ -257,13 +252,15 @@ namespace GitHub.Runner.Worker
                     return;
                 }
 
-                var artifactUrl = ReadActionOutput(context, container, "artifact-url");
-                if (!Uri.TryCreate(artifactUrl, UriKind.Absolute, out var directArtifactUri)
-                    || (directArtifactUri.Scheme != Uri.UriSchemeHttp && directArtifactUri.Scheme != Uri.UriSchemeHttps))
+                // The external Results service exposes its artifact browser here. The action's
+                // artifact-url output still points at GitHub's native artifact route, which does
+                // not contain uploads stored exclusively by the self-hosted Results service.
+                var artifactsPage = new UriBuilder(configuredUri)
                 {
-                    Trace.Warning("upload-artifact did not provide a valid artifact-url; skipping the artifact summary row");
-                    return;
-                }
+                    Path = "/artifacts",
+                    Query = String.Empty,
+                    Fragment = String.Empty
+                }.Uri.AbsoluteUri.TrimEnd('/');
 
                 var artifactName = "artifact";
                 if (context.ActionInputs?.TryGetValue("name", out var configuredArtifactName) == true
@@ -292,10 +289,10 @@ namespace GitHub.Runner.Worker
                 summary.AppendLine();
                 summary.AppendLine("| **Name** | **Size** | **Digest** |   |");
                 summary.AppendLine("| :--- | :--- | :--- | - |");
-                summary.AppendLine($"| [**{visibleArtifactName}**]({directArtifactUri.AbsoluteUri}) | {size} | {digestCell} |   |");
+                summary.AppendLine($"| [**{visibleArtifactName}**]({artifactsPage}) | {size} | {digestCell} |   |");
                 summary.AppendLine();
                 File.AppendAllText(filePath, summary.ToString());
-                Trace.Info($"Added artifact summary row for '{artifactName}' ({directArtifactUri.AbsoluteUri})");
+                Trace.Info($"Added artifact summary row for '{artifactName}' (artifact browser: {artifactsPage})");
             }
             catch (Exception ex)
             {
