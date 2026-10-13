@@ -54,6 +54,8 @@ namespace GitHub.Runner.Worker
         GlobalContext Global { get; }
 
         Dictionary<string, string> IntraActionState { get; }
+        Dictionary<string, string> ActionInputs { get; set; }
+        long? UploadedArtifactSizeBytes { get; set; }
         Dictionary<string, VariableValue> JobOutputs { get; }
         ActionsEnvironmentReference ActionsEnvironment { get; }
         ActionsStepTelemetry StepTelemetry { get; }
@@ -205,6 +207,8 @@ namespace GitHub.Runner.Worker
         public Task ForceCompleted => _forceCompleted.Task;
         public CancellationToken CancellationToken => _cancellationTokenSource.Token;
         public Dictionary<string, string> IntraActionState { get; private set; }
+        public Dictionary<string, string> ActionInputs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public long? UploadedArtifactSizeBytes { get; set; }
         public Dictionary<string, VariableValue> JobOutputs { get; private set; }
 
         public ActionsEnvironmentReference ActionsEnvironment { get; private set; }
