@@ -303,6 +303,7 @@ namespace GitHub.Runner.Common.Tests.Worker
             _executionContext.Setup(x => x.Global)
                 .Returns(new GlobalContext
                 {
+                    Endpoints = new List<ServiceEndpoint>(),
                     EnvironmentVariables = new Dictionary<string, string>(VarUtil.EnvironmentVariableKeyComparer),
                     WriteDebug = true,
                     Variables = _variables,
