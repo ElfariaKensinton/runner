@@ -308,15 +308,15 @@ namespace GitHub.Runner.Worker
                     Trace.Info($"Artifact summary download path key: '{relativeArtifactPath}'");
                 }
 
-                // Match the supplied GitHub-style card markup. Icon images use the
-                // artifact server's SVG endpoint so they survive job-summary sanitizing.
+                // Match the supplied GitHub-style card markup. The hollow package cube is inline;
+                // copy, download and delete icons use the artifact server's SVG image endpoint.
                 var packageIcon = BuildPackageOutlineIcon();
                 var linkedPackageIcon = String.IsNullOrWhiteSpace(downloadUrl)
                     ? packageIcon
                     : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" style=\"color: #24292f; text-decoration: none; cursor: pointer;\">{packageIcon}</a>";
                 var linkedName = String.IsNullOrWhiteSpace(downloadUrl)
                     ? EscapeHtmlText(artifactName)
-                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" style=\"color: #24292f; text-decoration: none; cursor: pointer;\">{EscapeHtmlText(artifactName)}</a>";
+                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" style=\"color: #24292f; text-decoration: none; cursor: pointer; word-break: break-all;\">{EscapeHtmlText(artifactName)}</a>";
 
                 var digestHtml = String.IsNullOrWhiteSpace(digest)
                     ? "<span style=\"font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px;\">—</span>"
