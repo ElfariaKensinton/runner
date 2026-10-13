@@ -162,27 +162,21 @@ namespace GitHub.Runner.Common.Tests.Worker
                         ["name"] = "patched-runner-osx-arm64"
                     });
                     _executionContext.SetupGet(x => x.UploadedArtifactSizeBytes).Returns(128L * 1024 * 1024);
-                    var artifactSummaryStepId = Guid.NewGuid();
-                    _executionContext.SetupGet(x => x.Id).Returns(artifactSummaryStepId);
 
                     var stepSummaryFile = Path.Combine(_rootDirectory, "artifact-summary");
                     WriteContent(stepSummaryFile, new List<string> { "# Upload results" });
 
                     _createStepCommand.ProcessCommand(_executionContext.Object, stepSummaryFile, null);
 
-                    Assert.True(ArtifactSummaryCollector.TryCreateSummary(
-                        _jobExecutionContext.Id,
-                        _rootDirectory,
-                        out var artifactSummaryPath,
-                        out var summaryStepId));
-                    Assert.Equal(artifactSummaryStepId, summaryStepId);
-
-                    var summary = File.ReadAllText(artifactSummaryPath);
+                    var summary = File.ReadAllText(stepSummaryFile);
+                    Assert.Contains("## Artifacts", summary);
                     Assert.Contains("Produced during runtime", summary);
-                    Assert.Contains("<b>patched-runner-osx-arm64</b>", summary);
-                    Assert.Contains("128 MB", summary);
-                    Assert.Contains("sha256:33bbb800…", summary);
+                    Assert.Contains("| <small>Name</small> | <small>Size</small> | <small>Digest</small> | |", summary);
                     Assert.Contains("https://artifacts.example.net/local-artifacts/icon/package.svg", summary);
+                    Assert.Contains("<b>patched-runner-osx-arm64</b>", summary);
+                    Assert.Contains("<small>128 MB</small>", summary);
+                    Assert.Contains("<code>sha256:33bbb800…</code>", summary);
+                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/copy.svg", summary);
 
                     _jobExecutionContext.Complete();
                     Assert.Equal(0, _issues.Count);
@@ -303,7 +297,6 @@ namespace GitHub.Runner.Common.Tests.Worker
             _executionContext.Setup(x => x.Global)
                 .Returns(new GlobalContext
                 {
-                    Endpoints = new List<ServiceEndpoint>(),
                     EnvironmentVariables = new Dictionary<string, string>(VarUtil.EnvironmentVariableKeyComparer),
                     WriteDebug = true,
                     Variables = _variables,
