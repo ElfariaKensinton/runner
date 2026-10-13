@@ -285,21 +285,19 @@ namespace GitHub.Runner.Worker
                 var visibleArtifactName = EscapeMarkdownTableCell(artifactName);
                 var size = FormatArtifactSize(context.UploadedArtifactSizeBytes);
                 var digest = ReadActionOutput(context, container, "artifact-digest");
-                var digestCell = String.IsNullOrWhiteSpace(digest)
-                    ? "—"
-                    : $"`{EscapeMarkdownTableCell(digest.Trim())}`";
                 var artifactId = ReadActionOutput(context, container, "artifact-id");
                 string downloadUrl = null;
-                string nameImageUrl = null;
 
                 // actions/upload-artifact uses workflow_run_backend_id from the
                 // Actions.Results scope in ACTIONS_RUNTIME_TOKEN. This is NOT the
-                // public github.run_id; the standalone server stores files under
-                // this backend ID, so use it to build the real download path.
+                // public github.run_id. The standalone server stores files under a
+                // directory key derived from this ID (see ToArtifactServerRunKey),
+                // so the same key must be used to build a working download path.
                 var workflowRunBackendId = ReadWorkflowRunBackendId(context);
                 if (!String.IsNullOrWhiteSpace(workflowRunBackendId))
                 {
-                    var relativeArtifactPath = $"{workflowRunBackendId}/{artifactName}/{artifactName}.zip";
+                    var runKey = ToArtifactServerRunKey(workflowRunBackendId.Trim());
+                    var relativeArtifactPath = $"{runKey}/{artifactName}/{artifactName}.zip";
                     var basePath = configuredUri.AbsolutePath.TrimEnd('/');
                     var downloadBaseUri = new UriBuilder(configuredUri)
                     {
@@ -308,30 +306,22 @@ namespace GitHub.Runner.Worker
                         Fragment = String.Empty
                     }.Uri;
                     downloadUrl = $"{downloadBaseUri.GetLeftPart(UriPartial.Path)}?path={Uri.EscapeDataString(relativeArtifactPath)}";
-                    var labelUri = new UriBuilder(configuredUri)
-                    {
-                        Path = $"{basePath}/local-artifacts/name.svg",
-                        Query = $"name={Uri.EscapeDataString(artifactName)}",
-                        Fragment = String.Empty
-                    };
-                    nameImageUrl = labelUri.Uri.AbsoluteUri;
                     Trace.Info($"Artifact summary download path key: '{relativeArtifactPath}'");
                 }
 
-                // The filename remains clickable; the separate final column contains the download icon.
-                // GitHub may sanitize inline styles in job summaries, but preserve the intended styling here.
-                // Render the filename as an SVG image so GitHub's summary HTML sanitizer
-                // cannot turn its black, no-underline styling back into a default blue link.
-                var nameCell = String.IsNullOrWhiteSpace(downloadUrl) || String.IsNullOrWhiteSpace(nameImageUrl)
-                    ? $"**{visibleArtifactName}**"
-                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" title=\"Download {EscapeHtmlAttribute(artifactName)}\"><img src=\"{EscapeHtmlAttribute(nameImageUrl)}\" alt=\"{EscapeHtmlAttribute(artifactName)}\" /></a>";
-                // Use the official Primer download octicon as an image: GitHub's Markdown
-                // sanitizer does not preserve inline SVG, but HTTPS images are supported.
-                // The fourth Markdown-table column is center-aligned below.
+                // Mirrors GitHub's native Artifacts list: package icon + bold (non-link)
+                // name, size, truncated digest with a copy icon, then download and delete
+                // icons. The icons are served by the artifact server itself because GitHub
+                // renders summary images through its image proxy, which needs a public
+                // URL with an image content type. The copy and delete icons are visual only:
+                // job summaries cannot run scripts.
+                var nameCell = $"{BuildIconImage(configuredUri, "package", "Artifact")} **{visibleArtifactName}**";
+                var digestCell = String.IsNullOrWhiteSpace(digest)
+                    ? "—"
+                    : $"`{EscapeMarkdownTableCell(FormatDigestForDisplay(digest))}` {BuildIconImage(configuredUri, "copy", "Copy digest")}";
                 var downloadCell = String.IsNullOrWhiteSpace(downloadUrl)
                     ? "—"
-                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" title=\"Download artifact\"><img src=\"https://raw.githubusercontent.com/primer/octicons/main/icons/download-16.svg\" alt=\"Download\" width=\"16\" height=\"16\" /></a>";
-
+                    : $"<a href="{EscapeHtmlAttribute(downloadUrl)}" title="Download artifact">{BuildIconImage(configuredUri, "download", "Download")}</a> {BuildIconImage(configuredUri, "trash", "Delete")}";
                 if (String.IsNullOrWhiteSpace(downloadUrl))
                 {
                     Trace.Warning($"Could not determine the Actions.Results workflow-run backend ID for artifact '{artifactName}'; no download link was added");
@@ -484,15 +474,60 @@ namespace GitHub.Runner.Worker
             var bytes = sizeBytes.Value;
             if (bytes >= 1024 * 1024)
             {
-                return $"{Math.Round(bytes / (1024d * 1024d), MidpointRounding.AwayFromZero).ToString("0", CultureInfo.InvariantCulture)} MB";
+                return $"{Math.Round(bytes / (1024d * 1024d), 2, MidpointRounding.AwayFromZero).ToString("0.##", CultureInfo.InvariantCulture)} MB";
             }
 
             if (bytes >= 1024)
             {
-                return $"{Math.Round(bytes / 1024d, MidpointRounding.AwayFromZero).ToString("0", CultureInfo.InvariantCulture)} KB";
+                return $"{Math.Round(bytes / 1024d, 2, MidpointRounding.AwayFromZero).ToString("0.##", CultureInfo.InvariantCulture)} KB";
             }
 
             return $"{bytes} B";
+        }
+
+        // GitHub shows the algorithm prefix plus the first 8 hex characters and an ellipsis.
+        private static string FormatDigestForDisplay(string digest)
+        {
+            var trimmed = digest.Trim();
+            var hexStart = trimmed.IndexOf(':') + 1;
+            return trimmed.Length - hexStart > 8
+                ? trimmed.Substring(0, hexStart + 8) + "…"
+                : trimmed;
+        }
+
+        private static string BuildIconImage(Uri configuredUri, string icon, string alt)
+        {
+            var iconUri = new UriBuilder(configuredUri)
+            {
+                Path = $"{configuredUri.AbsolutePath.TrimEnd('/')}/local-artifacts/icon/{icon}.svg",
+                Query = String.Empty,
+                Fragment = String.Empty
+            }.Uri;
+            return $"<img src=\"{EscapeHtmlAttribute(iconUri.AbsoluteUri)}\" alt=\"{EscapeHtmlAttribute(alt)}\" width=\"16\" height=\"16\" />";
+        }
+
+        // Mirrors the artifact server's directory key for a workflow_run_backend_id:
+        // numeric IDs are used as-is, any other (opaque/GUID) ID is stored under the
+        // signed 64-bit FNV-1a hash of the raw ID. Linking with the raw GUID gives a
+        // dead download link because that directory does not exist.
+        internal static string ToArtifactServerRunKey(string workflowRunBackendId)
+        {
+            if (long.TryParse(workflowRunBackendId, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var numeric))
+            {
+                return numeric.ToString(CultureInfo.InvariantCulture);
+            }
+
+            unchecked
+            {
+                ulong hash = 14695981039346656037UL;
+                foreach (var b in Encoding.UTF8.GetBytes(workflowRunBackendId))
+                {
+                    hash ^= b;
+                    hash *= 1099511628211UL;
+                }
+
+                return ((long)hash).ToString(CultureInfo.InvariantCulture);
+            }
         }
 
         private static string EscapeMarkdownTableCell(string value)
@@ -841,7 +876,7 @@ namespace GitHub.Runner.Worker
             summary.AppendLine();
             summary.AppendLine("Produced during runtime");
             summary.AppendLine();
-            summary.AppendLine("| **Name** | **Size** | **Digest** | **Download** |");
+            summary.AppendLine("| Name | Size | Digest | |");
             summary.AppendLine("| :--- | :--- | :--- | :---: |");
             foreach (var row in rows)
             {
