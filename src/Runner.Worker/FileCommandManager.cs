@@ -503,7 +503,9 @@ namespace GitHub.Runner.Worker
             var iconUri = new UriBuilder(configuredUri)
             {
                 Path = $"{configuredUri.AbsolutePath.TrimEnd('/')}/local-artifacts/icon/{icon}.svg",
-                Query = String.Empty,
+                // GitHub's image proxy caches summary images by URL. Bump this value
+                // whenever an icon changes, otherwise the old image keeps showing.
+                Query = "v=2",
                 Fragment = String.Empty
             }.Uri;
             return $"<img src=\"{EscapeHtmlAttribute(iconUri.AbsoluteUri)}\" alt=\"{EscapeHtmlAttribute(alt)}\" width=\"16\" height=\"16\" />";
