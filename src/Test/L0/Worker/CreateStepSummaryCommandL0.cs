@@ -163,20 +163,61 @@ namespace GitHub.Runner.Common.Tests.Worker
                     });
                     _executionContext.SetupGet(x => x.UploadedArtifactSizeBytes).Returns(128L * 1024 * 1024);
 
+                    var artifactSummaryStepId = Guid.NewGuid();
+                    _executionContext.SetupGet(x => x.Id).Returns(artifactSummaryStepId);
+                    var tokenPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes("{\"scp\":\"Actions.Results:12345:67890\"}"))
+                        .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+                    var accessToken = $"header.{tokenPayload}.signature";
+                    _executionContext.Setup(x => x.Global).Returns(new GlobalContext
+                    {
+                        Endpoints = new List<ServiceEndpoint>
+                        {
+                            new ServiceEndpoint
+                            {
+                                Name = "SystemVssConnection",
+                                Authorization = new EndpointAuthorization
+                                {
+                                    Parameters = new Dictionary<string, string>
+                                    {
+                                        ["AccessToken"] = accessToken
+                                    }
+                                }
+                            }
+                        },
+                        EnvironmentVariables = new Dictionary<string, string>(VarUtil.EnvironmentVariableKeyComparer),
+                        WriteDebug = true,
+                        Variables = _variables,
+                    });
+
                     var stepSummaryFile = Path.Combine(_rootDirectory, "artifact-summary");
                     WriteContent(stepSummaryFile, new List<string> { "# Upload results" });
 
                     _createStepCommand.ProcessCommand(_executionContext.Object, stepSummaryFile, null);
 
-                    var summary = File.ReadAllText(stepSummaryFile);
-                    Assert.Contains("## Artifacts", summary);
-                    Assert.Contains("Produced during runtime", summary);
-                    Assert.Contains("| <small>Name</small> | <small>Size</small> | <small>Digest</small> | |", summary);
-                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/package.svg", summary);
-                    Assert.Contains("<b>patched-runner-osx-arm64</b>", summary);
-                    Assert.Contains("<small>128 MB</small>", summary);
-                    Assert.Contains("<code>sha256:33bbb800…</code>", summary);
-                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/copy.svg", summary);
+                    Assert.True(ArtifactSummaryCollector.TryCreateSummary(
+                        _jobExecutionContext.Id,
+                        _rootDirectory,
+                        out var artifactSummaryPath,
+                        out var summaryStepId));
+                    Assert.Equal(artifactSummaryStepId, summaryStepId);
+
+                    var summary = File.ReadAllText(artifactSummaryPath);
+                    var downloadUrl = "https://artifacts.example.net/local-artifacts/download?path=12345%2Fpatched-runner-osx-arm64%2Fpatched-runner-osx-arm64.zip";
+                    Assert.Contains("border: 1px solid #d0d7de; border-radius: 6px;", summary);
+                    Assert.Contains("max-width: 900px;", summary);
+                    Assert.Contains("<h2 style=\"margin: 0; font-size: 16px; font-weight: 600;\">Artifacts</h2>", summary);
+                    Assert.Contains("<p style=\"margin: 4px 0 24px 0; font-size: 14px; color: #57606a;\">Produced during runtime</p>", summary);
+                    Assert.Contains("width: 45%;", summary);
+                    Assert.Contains("width: 20%;", summary);
+                    Assert.Contains("<tr style=\"border-top: 1px solid #d0d7de;\">", summary);
+                    Assert.Contains("href=\"" + downloadUrl + "\"", summary);
+                    Assert.Contains("patched-runner-osx-arm64", summary);
+                    Assert.Contains("128 MB", summary);
+                    Assert.Contains("sha256:33bbb800…", summary);
+                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/package.svg?v=2", summary);
+                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/copy.svg?v=2", summary);
+                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/download.svg?v=2", summary);
+                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/trash.svg?v=2", summary);
 
                     _jobExecutionContext.Complete();
                     Assert.Equal(0, _issues.Count);
