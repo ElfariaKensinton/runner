@@ -17,6 +17,7 @@ namespace GitHub.Runner.Worker.Handlers
         private const int _maxAttempts = 3;
         private const string _timeoutKey = "GITHUB_ACTIONS_RUNNER_ISSUE_MATCHER_TIMEOUT";
         private static readonly Regex _colorCodeRegex = new(@"\x0033\[[0-9;]*m?", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        private static readonly Regex _artifactUploadSizeRegex = new(@"Final size is ([0-9]+) bytes", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
         private readonly IActionCommandManager _commandManager;
         private readonly ContainerInfo _container;
         private readonly IExecutionContext _executionContext;
@@ -77,6 +78,25 @@ namespace GitHub.Runner.Worker.Handlers
         public void OnDataReceived(object sender, ProcessDataReceivedEventArgs e)
         {
             var line = e.Data;
+
+            // upload-artifact logs the exact size of the archive returned by the Results service.
+            // Capture it for the runner-generated artifact table; this must not affect step success.
+            if (!String.IsNullOrEmpty(line))
+            {
+                var actionContext = _executionContext.GetGitHubContext("action") ?? String.Empty;
+                var telemetryAction = _executionContext.StepTelemetry?.Action ?? String.Empty;
+                var isArtifactUpload = actionContext.IndexOf("upload-artifact", StringComparison.OrdinalIgnoreCase) >= 0
+                    || (telemetryAction.IndexOf("upload", StringComparison.OrdinalIgnoreCase) >= 0
+                        && telemetryAction.IndexOf("artifact", StringComparison.OrdinalIgnoreCase) >= 0);
+                if (isArtifactUpload)
+                {
+                    var sizeMatch = _artifactUploadSizeRegex.Match(line);
+                    if (sizeMatch.Success && Int64.TryParse(sizeMatch.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var sizeBytes))
+                    {
+                        _executionContext.UploadedArtifactSizeBytes = sizeBytes;
+                    }
+                }
+            }
 
             // ## commands
             if (!String.IsNullOrEmpty(line) &&
