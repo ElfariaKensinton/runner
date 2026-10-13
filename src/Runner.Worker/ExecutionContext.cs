@@ -55,6 +55,7 @@ namespace GitHub.Runner.Worker
 
         Dictionary<string, string> IntraActionState { get; }
         Dictionary<string, string> ActionInputs { get; set; }
+        bool IsArtifactUploadAction { get; set; }
         long? UploadedArtifactSizeBytes { get; set; }
         Dictionary<string, VariableValue> JobOutputs { get; }
         ActionsEnvironmentReference ActionsEnvironment { get; }
@@ -208,6 +209,7 @@ namespace GitHub.Runner.Worker
         public CancellationToken CancellationToken => _cancellationTokenSource.Token;
         public Dictionary<string, string> IntraActionState { get; private set; }
         public Dictionary<string, string> ActionInputs { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        public bool IsArtifactUploadAction { get; set; }
         public long? UploadedArtifactSizeBytes { get; set; }
         public Dictionary<string, VariableValue> JobOutputs { get; private set; }
 
