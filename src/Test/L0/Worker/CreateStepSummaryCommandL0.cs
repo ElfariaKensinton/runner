@@ -151,7 +151,8 @@ namespace GitHub.Runner.Common.Tests.Worker
                     var outputFile = Path.Combine(_rootDirectory, "artifact-output");
                     WriteContent(outputFile, new List<string>
                     {
-                        "artifact-digest=sha256:33bbb8003ca9f2684ab9b9b85446aa77d27d2de61b094eef18c0e178e59774cd"
+                        "artifact-digest=sha256:33bbb8003ca9f2684ab9b9b85446aa77d27d2de61b094eef18c0e178e59774cd",
+                        "artifact-id=12345"
                     });
 
                     _executionContext.SetupGet(x => x.IsArtifactUploadAction).Returns(true);
@@ -171,7 +172,7 @@ namespace GitHub.Runner.Common.Tests.Worker
                     Assert.Contains("## Artifacts", summary);
                     Assert.Contains("Produced during runtime", summary);
                     Assert.Contains("| **Name** | **Size** | **Digest** |   |", summary);
-                    Assert.Contains("| [**patched-runner-osx-arm64**](https://artifacts.example.net/artifacts) | 128 MB | `sha256:33bbb8003ca9f2684ab9b9b85446aa77d27d2de61b094eef18c0e178e59774cd` |   |", summary);
+                    Assert.Contains("| **patched-runner-osx-arm64** | 128 MB | `sha256:33bbb8003ca9f2684ab9b9b85446aa77d27d2de61b094eef18c0e178e59774cd` | [⬇](https://artifacts.example.net/artifacts/12345/download \"Download artifact\") |", summary);
 
                     _jobExecutionContext.Complete();
                     Assert.Equal(0, _issues.Count);
