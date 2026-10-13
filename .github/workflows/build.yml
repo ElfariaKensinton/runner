@@ -174,7 +174,7 @@ jobs:
           }
 
           if (visible.length === 0) {
-            lines.push('| No artifacts found | — | — |   |');
+            lines.push('| No artifacts found | — | — | — |');
           }
 
           await core.summary.addRaw(lines.join('\n')).write();
