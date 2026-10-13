@@ -239,6 +239,8 @@ namespace GitHub.Runner.Worker
             // Keep evaluated action inputs available for file-command processing after the step exits.
             // The artifact summary needs the upload-artifact name input.
             ExecutionContext.ActionInputs = new Dictionary<string, string>(inputs, StringComparer.OrdinalIgnoreCase);
+            ExecutionContext.IsArtifactUploadAction = Action.Reference is Pipelines.RepositoryPathReference artifactReference
+                && string.Equals(artifactReference.Name, "actions/upload-artifact", StringComparison.OrdinalIgnoreCase);
             ExecutionContext.UploadedArtifactSizeBytes = null;
 
             // Load the action environment.
