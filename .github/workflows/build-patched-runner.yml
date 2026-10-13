@@ -5,6 +5,14 @@ on:
     branches: [feature/self-hosted-artifact-results-url]
   workflow_dispatch:
     inputs:
+      runner_type:
+        description: 'Runner for the build jobs (self-hosted requires a macOS runner labeled self-hosted and macOS)'
+        type: choice
+        required: true
+        default: github-hosted
+        options:
+          - github-hosted
+          - self-hosted
       push_to_release:
         description: 'Upload the built runner packages to a GitHub Release'
         type: boolean
@@ -21,7 +29,7 @@ jobs:
       fail-fast: false
       matrix:
         runtime: [osx-x64, osx-arm64]
-    runs-on: macos-latest
+    runs-on: ${{ inputs.runner_type == 'self-hosted' && fromJSON('["self-hosted", "macOS"]') || 'macos-latest' }}
     steps:
       - uses: actions/checkout@v7
       - name: Build runner layout
