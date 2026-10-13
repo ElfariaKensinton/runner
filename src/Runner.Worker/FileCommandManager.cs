@@ -253,8 +253,6 @@ namespace GitHub.Runner.Worker
                 }
 
                 // The row shows a plain bold filename and puts the direct download link in the last column.
-
-
                 var artifactName = "artifact";
                 if (context.ActionInputs?.TryGetValue("name", out var configuredArtifactName) == true
                     && !String.IsNullOrWhiteSpace(configuredArtifactName))
@@ -272,7 +270,7 @@ namespace GitHub.Runner.Worker
                 var digest = ReadActionOutput(context, container, "artifact-digest");
                 var digestCell = String.IsNullOrWhiteSpace(digest)
                     ? "—"
-                    : $"\`{EscapeMarkdownTableCell(digest.Trim())}\`";
+                    : $"`{EscapeMarkdownTableCell(digest.Trim())}`";
                 var artifactId = ReadActionOutput(context, container, "artifact-id");
                 var downloadCell = String.Empty;
                 if (!String.IsNullOrWhiteSpace(artifactId))
@@ -368,7 +366,7 @@ namespace GitHub.Runner.Worker
                 .Replace("|", "\\|")
                 .Replace("[", "\\[")
                 .Replace("]", "\\]")
-                .Replace("`", "\\`")
+                .Replace("`", "\`")
                 .Replace("\r", " ")
                 .Replace("\n", " ");
         }
