@@ -252,15 +252,8 @@ namespace GitHub.Runner.Worker
                     return;
                 }
 
-                // The external Results service exposes its artifact browser here. The action's
-                // artifact-url output still points at GitHub's native artifact route, which does
-                // not contain uploads stored exclusively by the self-hosted Results service.
-                var artifactsPage = new UriBuilder(configuredUri)
-                {
-                    Path = "/artifacts",
-                    Query = String.Empty,
-                    Fragment = String.Empty
-                }.Uri.AbsoluteUri.TrimEnd('/');
+                // The row shows a plain bold filename and puts the direct download link in the last column.
+
 
                 var artifactName = "artifact";
                 if (context.ActionInputs?.TryGetValue("name", out var configuredArtifactName) == true
@@ -279,7 +272,23 @@ namespace GitHub.Runner.Worker
                 var digest = ReadActionOutput(context, container, "artifact-digest");
                 var digestCell = String.IsNullOrWhiteSpace(digest)
                     ? "—"
-                    : $"`{EscapeMarkdownTableCell(digest.Trim())}`";
+                    : $"\`{EscapeMarkdownTableCell(digest.Trim())}\`";
+                var artifactId = ReadActionOutput(context, container, "artifact-id");
+                var downloadCell = String.Empty;
+                if (!String.IsNullOrWhiteSpace(artifactId))
+                {
+                    var downloadUrl = new UriBuilder(configuredUri)
+                    {
+                        Path = $"/artifacts/{artifactId.Trim()}/download",
+                        Query = String.Empty,
+                        Fragment = String.Empty
+                    }.Uri.AbsoluteUri;
+                    downloadCell = $"[⬇]({downloadUrl} \"Download artifact\")";
+                }
+                else
+                {
+                    Trace.Warning($"Artifact '{artifactName}' did not expose artifact-id; leaving its download cell empty");
+                }
 
                 var summary = new StringBuilder();
                 summary.AppendLine();
@@ -289,10 +298,10 @@ namespace GitHub.Runner.Worker
                 summary.AppendLine();
                 summary.AppendLine("| **Name** | **Size** | **Digest** |   |");
                 summary.AppendLine("| :--- | :--- | :--- | - |");
-                summary.AppendLine($"| [**{visibleArtifactName}**]({artifactsPage}) | {size} | {digestCell} |   |");
+                summary.AppendLine($"| **{visibleArtifactName}** | {size} | {digestCell} | {downloadCell} |");
                 summary.AppendLine();
                 File.AppendAllText(filePath, summary.ToString());
-                Trace.Info($"Added artifact summary row for '{artifactName}' (artifact browser: {artifactsPage})");
+                Trace.Info($"Added artifact summary row for '{artifactName}' (download link available: {!String.IsNullOrWhiteSpace(downloadCell)})");
             }
             catch (Exception ex)
             {
