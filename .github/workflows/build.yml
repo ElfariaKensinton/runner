@@ -156,7 +156,7 @@ jobs:
             '',
             'Produced during runtime',
             '',
-            '| **Name** | **Size** | **Digest** |   |',
+            '| **Name** | **Size** | **Digest** | **Download** |',
             '| :--- | :--- | :--- | - |'
           ];
 
@@ -170,7 +170,7 @@ jobs:
             const url = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}/artifacts/${artifact.id}`;
             const name = artifact.name.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
             const digest = artifact.digest || '—';
-            lines.push(`| [**${name}**](${url}) | ${formatSize(artifact.size_in_bytes)} | \`${digest}\` |   |`);
+            lines.push(`| **${name}** | ${formatSize(artifact.size_in_bytes)} | \`${digest}\` | [⬇️](${url} "Download artifact") |`);
           }
 
           if (visible.length === 0) {
