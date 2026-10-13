@@ -291,12 +291,19 @@ namespace GitHub.Runner.Worker
                 var artifactUrl = ReadActionOutput(context, container, "artifact-url");
                 string downloadUrl = null;
 
-                if (!String.IsNullOrWhiteSpace(artifactId))
+                // The standalone artifact server stores v4 artifacts at
+                // <run-id>/<artifact-name>/<artifact-name>.zip and exposes a stable
+                // download endpoint. Do not depend on action outputs being populated
+                // or use /artifacts/{id}/download, which this server does not expose.
+                var runId = context.GetGitHubContext("run_id");
+                if (!String.IsNullOrWhiteSpace(runId))
                 {
+                    var relativeArtifactPath = $"{runId.Trim()}/{artifactName}/{artifactName}.zip";
+                    var basePath = configuredUri.AbsolutePath.TrimEnd('/');
                     downloadUrl = new UriBuilder(configuredUri)
                     {
-                        Path = $"/artifacts/{Uri.EscapeDataString(artifactId.Trim())}/download",
-                        Query = String.Empty,
+                        Path = $"{basePath}/local-artifacts/download",
+                        Query = $"path={Uri.EscapeDataString(relativeArtifactPath)}",
                         Fragment = String.Empty
                     }.Uri.AbsoluteUri;
                 }
