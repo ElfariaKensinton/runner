@@ -263,7 +263,7 @@ namespace GitHub.Runner.Worker
                 var visibleArtifactName = EscapeMarkdownTableCell(artifactName);
                 var size = FormatArtifactSize(context.UploadedArtifactSizeBytes);
                 var digest = ReadActionOutput(context, container, "artifact-digest");
-                var digestCell = String.IsNullOrWhiteSpace(digest)
+                    : $"`{EscapeMarkdownTableCell(digest.Trim())}`";
                     ? "—"
                     : $"\`{EscapeMarkdownTableCell(digest.Trim())}\`";
                 var artifactId = ReadActionOutput(context, container, "artifact-id");
