@@ -341,7 +341,7 @@ namespace GitHub.Runner.Worker
             }
         }
 
-        private static string ReadWorkflowRunBackendId(IExecutionContext context)
+        private string ReadWorkflowRunBackendId(IExecutionContext context)
         {
             // The upload-artifact toolkit extracts these backend IDs from the
             // "Actions.Results:<workflow-run-backend-id>:<workflow-job-run-backend-id>"
