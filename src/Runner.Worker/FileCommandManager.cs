@@ -286,8 +286,6 @@ namespace GitHub.Runner.Worker
                 var digest = ReadActionOutput(context, container, "artifact-digest");
                 var artifactId = ReadActionOutput(context, container, "artifact-id");
                 string downloadUrl = null;
-                string summaryUrl = null;
-                string summaryIconUrl = null;
 
                 // actions/upload-artifact uses workflow_run_backend_id from the
                 // Actions.Results scope in ACTIONS_RUNTIME_TOKEN. This is NOT the
@@ -307,62 +305,29 @@ namespace GitHub.Runner.Worker
                         Fragment = String.Empty
                     }.Uri;
                     downloadUrl = $"{downloadBaseUri.GetLeftPart(UriPartial.Path)}?path={Uri.EscapeDataString(relativeArtifactPath)}";
-                    var summaryPageUri = new UriBuilder(configuredUri)
-                    {
-                        Path = $"{basePath}/local-artifacts/summary",
-                        Query = String.Empty,
-                        Fragment = String.Empty
-                    }.Uri;
-                    summaryUrl = $"{summaryPageUri.GetLeftPart(UriPartial.Path)}?runId={Uri.EscapeDataString(runKey)}";
-                    var summaryIconUri = new UriBuilder(configuredUri)
-                    {
-                        Path = $"{basePath}/local-artifacts/icon/package.svg",
-                        Query = "v=3",
-                        Fragment = String.Empty
-                    }.Uri;
-                    summaryIconUrl = summaryIconUri.AbsoluteUri;
                     Trace.Info($"Artifact summary download path key: '{relativeArtifactPath}'");
                 }
-
-                // Match the supplied GitHub-style card markup. The hollow package cube is inline;
-                // copy, download and delete icons use the artifact server's SVG image endpoint.
-                var packageIcon = BuildPackageOutlineIcon();
-                var linkedPackageIcon = String.IsNullOrWhiteSpace(downloadUrl)
-                    ? packageIcon
-                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" style=\"color: #24292f; text-decoration: none; cursor: pointer;\">{packageIcon}</a>";
-                var linkedName = String.IsNullOrWhiteSpace(downloadUrl)
-                    ? EscapeHtmlText(artifactName)
-                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" style=\"color: #24292f; text-decoration: none; cursor: pointer; word-break: break-all;\">{EscapeHtmlText(artifactName)}</a>";
-
-                var digestHtml = String.IsNullOrWhiteSpace(digest)
-                    ? "<span style=\"font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px;\">—</span>"
-                    : $"<span style=\"font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px;\">{EscapeHtmlText(FormatDigestForDisplay(digest))}</span>";
-                var copyIcon = String.IsNullOrWhiteSpace(digest)
-                    ? String.Empty
-                    : BuildIconImage(configuredUri, "copy", "Copy digest");
-
-                var downloadIcon = BuildIconImage(configuredUri, "download", "Download");
-                var linkedDownloadIcon = String.IsNullOrWhiteSpace(downloadUrl)
-                    ? downloadIcon
-                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" title=\"Download artifact\" style=\"cursor: pointer;\">{downloadIcon}</a>";
-                var trashIcon = BuildIconImage(configuredUri, "trash", "Delete");
-
-                var nameCell = $"<td style=\"padding: 16px; font-weight: 600;\"><div style=\"display: flex; align-items: center; gap: 8px;\">{linkedPackageIcon}{linkedName}</div></td>";
-                var sizeCell = $"<td style=\"padding: 16px;\">{EscapeHtmlText(size)}</td>";
-                var digestCell = $"<td style=\"padding: 16px;\"><div style=\"display: flex; align-items: center; gap: 8px;\">{digestHtml}{copyIcon}</div></td>";
-                var downloadCell = $"<td style=\"padding: 16px; text-align: right; color: #57606a;\"><div style=\"display: flex; align-items: center; justify-content: flex-end; gap: 16px;\">{linkedDownloadIcon}{trashIcon}</div></td>";
-                if (String.IsNullOrWhiteSpace(downloadUrl))
+                else
                 {
                     Trace.Warning($"Could not determine the Actions.Results workflow-run backend ID for artifact '{artifactName}'; no download link was added");
                 }
 
-                var row = $"<tr style=\"border-top: 1px solid #d0d7de;\">{nameCell}{sizeCell}{digestCell}{downloadCell}</tr>";
+                // The table itself is drawn by the artifact server (see ArtifactSummaryCollector):
+                // job summaries cannot set font sizes, borders or alignment, so a 1:1 copy of
+                // GitHub's native Artifacts list is only possible as a server-rendered image.
+                var summaryRow = new ArtifactSummaryRow
+                {
+                    Name = artifactName,
+                    Size = size,
+                    Digest = String.IsNullOrWhiteSpace(digest) ? String.Empty : FormatDigestForDisplay(digest),
+                    DownloadUrl = downloadUrl
+                };
                 var rowKey = String.IsNullOrWhiteSpace(artifactId)
                     ? Guid.NewGuid().ToString("N")
                     : artifactId.Trim();
 
-                ArtifactSummaryCollector.Add(context.Root.Id, context.Id, rowKey, row, summaryUrl, summaryIconUrl);
-                Trace.Info($"Collected artifact summary row for '{artifactName}' (download link available: {!String.IsNullOrWhiteSpace(downloadCell)})");
+                ArtifactSummaryCollector.Add(context.Root.Id, context.Id, rowKey, configuredUri.AbsoluteUri, summaryRow);
+                Trace.Info($"Collected artifact summary row for '{artifactName}' (download link available: {!String.IsNullOrWhiteSpace(downloadUrl)})");
             }
             catch (Exception ex)
             {
@@ -500,6 +465,7 @@ namespace GitHub.Runner.Worker
                 return "—";
             }
 
+            // Up to two decimals with trailing zeros dropped, like "6.4 MB" / "6.03 MB".
             var bytes = sizeBytes.Value;
             if (bytes >= 1024 * 1024)
             {
@@ -522,25 +488,6 @@ namespace GitHub.Runner.Worker
             return trimmed.Length - hexStart > 8
                 ? trimmed.Substring(0, hexStart + 8) + "…"
                 : trimmed;
-        }
-
-        private static string BuildPackageOutlineIcon()
-        {
-            // Keep the cube hollow and fixed at 16px even when the surrounding table gets narrow.
-            return "<svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" style=\"color: #57606a; flex-shrink: 0; min-width: 16px;\"><path d=\"M1.75 4.75L8 1.5L14.25 4.75V11.25L8 14.5L1.75 11.25V4.75Z\" /><path d=\"M1.75 4.75L8 8L14.25 4.75\" /><path d=\"M8 8V14.5\" /></svg>";
-        }
-
-        private static string BuildIconImage(Uri configuredUri, string icon, string alt)
-        {
-            var iconUri = new UriBuilder(configuredUri)
-            {
-                Path = $"{configuredUri.AbsolutePath.TrimEnd('/')}/local-artifacts/icon/{icon}.svg",
-                // GitHub's image proxy caches summary images by URL. Bump this value
-                // whenever an icon changes, otherwise the old image keeps showing.
-                Query = "v=3",
-                Fragment = String.Empty
-            }.Uri;
-            return $"<img src=\"{EscapeHtmlAttribute(iconUri.AbsoluteUri)}\" alt=\"{EscapeHtmlAttribute(alt)}\" width=\"16\" height=\"16\" />";
         }
 
         // Mirrors the artifact server's directory key for a workflow_run_backend_id:
@@ -566,20 +513,6 @@ namespace GitHub.Runner.Worker
                 return ((long)hash).ToString(CultureInfo.InvariantCulture);
             }
         }
-
-        private static string EscapeMarkdownTableCell(string value)
-        {
-            return (value ?? String.Empty)
-                .Replace("\\", "\\\\")
-                .Replace("|", "\\|")
-                .Replace("[", "\\[")
-                .Replace("]", "\\]")
-                .Replace("`", "\\`")
-                .Replace("\r", " ")
-                .Replace("\n", " ");
-        }
-
-
 
         public void ProcessCommand(IExecutionContext context, string filePath, ContainerInfo container)
         {
@@ -857,36 +790,38 @@ namespace GitHub.Runner.Worker
         }
     }
 
+    internal sealed class ArtifactSummaryRow
+    {
+        public string Name { get; set; }
+        public string Size { get; set; }
+        public string Digest { get; set; }
+        public string DownloadUrl { get; set; }
+    }
+
     internal static class ArtifactSummaryCollector
     {
         private sealed class JobSummaryState
         {
             public object Gate { get; } = new object();
-            public List<string> Rows { get; } = new List<string>();
+            public List<ArtifactSummaryRow> Rows { get; } = new List<ArtifactSummaryRow>();
             public HashSet<string> ArtifactIds { get; } = new HashSet<string>(StringComparer.Ordinal);
+            public string BaseUrl { get; set; }
             public Guid LastStepId { get; set; }
-            public string SummaryUrl { get; set; }
-            public string SummaryIconUrl { get; set; }
         }
 
         private static readonly ConcurrentDictionary<Guid, JobSummaryState> _jobs = new ConcurrentDictionary<Guid, JobSummaryState>();
 
-        public static void Add(Guid jobId, Guid stepId, string artifactId, string htmlRow, string summaryUrl, string summaryIconUrl)
+        public static void Add(Guid jobId, Guid stepId, string artifactId, string baseUrl, ArtifactSummaryRow row)
         {
             var state = _jobs.GetOrAdd(jobId, _ => new JobSummaryState());
             lock (state.Gate)
             {
                 if (state.ArtifactIds.Add(artifactId))
                 {
-                    state.Rows.Add(htmlRow);
+                    state.Rows.Add(row);
                 }
 
-                if (!String.IsNullOrWhiteSpace(summaryUrl))
-                {
-                    state.SummaryUrl = summaryUrl;
-                    state.SummaryIconUrl = summaryIconUrl;
-                }
-
+                state.BaseUrl = baseUrl;
                 state.LastStepId = stepId;
             }
         }
@@ -901,18 +836,16 @@ namespace GitHub.Runner.Worker
                 return false;
             }
 
-            string[] rows;
-            string summaryUrl;
-            string summaryIconUrl;
+            ArtifactSummaryRow[] rows;
+            string baseUrl;
             lock (state.Gate)
             {
                 rows = state.Rows.ToArray();
+                baseUrl = state.BaseUrl;
                 stepRecordId = state.LastStepId;
-                summaryUrl = state.SummaryUrl;
-                summaryIconUrl = state.SummaryIconUrl;
             }
 
-            if (rows.Length == 0 || stepRecordId == Guid.Empty)
+            if (rows.Length == 0 || stepRecordId == Guid.Empty || !Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri))
             {
                 return false;
             }
@@ -920,41 +853,63 @@ namespace GitHub.Runner.Worker
             Directory.CreateDirectory(tempDirectory);
             summaryPath = Path.Combine(tempDirectory, $"artifact-summary-{jobId:N}.md");
 
-            var summary = new StringBuilder();
-            if (!String.IsNullOrWhiteSpace(summaryUrl))
+            var basePath = baseUri.AbsolutePath.TrimEnd('/');
+            string IconUrl(string icon) => new UriBuilder(baseUri)
             {
-                // GitHub sanitizes inline CSS in job summaries. Keep the summary entry
-                // simple and let the artifact server render the fully styled HTML card.
-                summary.AppendLine($"## Artifacts [![Open artifact table](<{summaryIconUrl}>)](<{summaryUrl}>)");
-                summary.AppendLine();
-                summary.AppendLine("Produced during runtime");
-            }
-            else
+                Path = $"{basePath}/local-artifacts/icon/{icon}.svg",
+                // GitHub's image proxy caches summary images by URL; bump v when an icon changes.
+                Query = "v=2",
+                Fragment = String.Empty
+            }.Uri.AbsoluteUri;
+            string Esc(string value) => (value ?? String.Empty).Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+            string Attr(string value) => Esc(value).Replace("\"", "&quot;");
+            string Icon(string icon, string alt) => $"<img src=\"{Attr(IconUrl(icon))}\" alt=\"{Attr(alt)}\" width=\"16\" height=\"16\" />";
+            string LinkTo(string url, string inner) => String.IsNullOrWhiteSpace(url)
+                ? inner
+                : $"<a href=\"{Attr(url)}\" style=\"color:inherit;text-decoration:none;\">{inner}</a>";
+
+            // Same structure and measurements as GitHub's native Artifacts box (h4 title, 12px
+            // muted subtitle, 14px table, 12px digest, borders only under the header and between
+            // rows). Both class and inline style are set; whatever the summary sanitizer keeps is
+            // applied, the rest falls back to a plain table with the same content.
+            const string headStyle = "padding:0 16px 8px 0;font-size:14px;font-weight:600;color:#59636e;text-align:left;border:0;border-bottom:1px solid #d1d9e0;";
+            const string cellStyle = "padding:12px 16px 12px 0;font-size:14px;vertical-align:middle;border:0;border-bottom:1px solid #d1d9e0;";
+            const string lastCellStyle = "padding:12px 16px 12px 0;font-size:14px;vertical-align:middle;border:0;";
+
+            var html = new StringBuilder();
+            html.AppendLine("<div class=\"Box border rounded\" style=\"border:1px solid #d1d9e0;border-radius:6px;padding:16px 16px 0;\">");
+            html.AppendLine("<h4 class=\"text-bold h4\" style=\"margin:0;font-size:16px;font-weight:600;\">Artifacts</h4>");
+            html.AppendLine("<div class=\"color-fg-muted text-small\" style=\"margin:0 0 12px;font-size:12px;color:#59636e;\">Produced during runtime</div>");
+            html.AppendLine("<table style=\"width:100%;table-layout:fixed;border-collapse:collapse;\">");
+            html.AppendLine("<thead><tr>");
+            html.AppendLine($"<th width=\"34%\" align=\"left\" style=\"{headStyle}\">Name</th>");
+            html.AppendLine($"<th width=\"16%\" align=\"left\" style=\"{headStyle}\">Size</th>");
+            html.AppendLine($"<th width=\"34%\" align=\"left\" style=\"{headStyle}\">Digest</th>");
+            html.AppendLine($"<th width=\"16%\" style=\"{headStyle}\"></th>");
+            html.AppendLine("</tr></thead>");
+            html.AppendLine("<tbody>");
+            for (var i = 0; i < rows.Length; i++)
             {
-                // Fallback when the external server run key cannot be determined.
-                summary.AppendLine("<div style=\"border: 1px solid #d0d7de; border-radius: 6px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background-color: #ffffff; color: #24292f; max-width: 900px;\">");
-                summary.AppendLine("<div style=\"padding: 16px;\">");
-                summary.AppendLine("<h2 style=\"margin: 0; font-size: 16px; font-weight: 600;\">Artifacts</h2>");
-                summary.AppendLine("<p style=\"margin: 4px 0 24px 0; font-size: 14px; color: #57606a;\">Produced during runtime</p>");
-                summary.AppendLine("<table style=\"width: 100%; border-collapse: collapse; text-align: left; font-size: 14px;\">");
-                summary.AppendLine("<thead><tr>");
-                summary.AppendLine("<th style=\"padding: 8px 16px 16px 16px; color: #57606a; font-weight: 600; width: 45%;\">Name</th>");
-                summary.AppendLine("<th style=\"padding: 8px 16px 16px 16px; color: #57606a; font-weight: 600; width: 20%;\">Size</th>");
-                summary.AppendLine("<th style=\"padding: 8px 16px 16px 16px; color: #57606a; font-weight: 600;\">Digest</th>");
-                summary.AppendLine("<th style=\"padding: 8px 16px 16px 16px;\"></th>");
-                summary.AppendLine("</tr></thead>");
-                summary.AppendLine("<tbody>");
-                foreach (var row in rows)
-                {
-                    summary.AppendLine(row);
-                }
-                summary.AppendLine("</tbody>");
-                summary.AppendLine("</table>");
-                summary.AppendLine("</div>");
-                summary.AppendLine("</div>");
+                var row = rows[i];
+                var style = i == rows.Length - 1 ? lastCellStyle : cellStyle;
+                var url = row.DownloadUrl;
+                var digestHtml = String.IsNullOrWhiteSpace(row.Digest)
+                    ? "—"
+                    : $"<code style=\"font-size:12px;\">{Esc(row.Digest)}</code>&nbsp;&nbsp;{Icon("copy", "Copy digest")}";
+
+                html.AppendLine("<tr>");
+                html.AppendLine($"<td style=\"{style}\">{LinkTo(url, Icon("package", "Artifact"))}&nbsp;&nbsp;{LinkTo(url, $"<b>{Esc(row.Name)}</b>")}</td>");
+                html.AppendLine($"<td style=\"{style}\">{Esc(row.Size)}</td>");
+                html.AppendLine($"<td style=\"{style}\">{digestHtml}</td>");
+                html.AppendLine($"<td align=\"right\" style=\"{style}padding-right:0;\">{LinkTo(url, Icon("download", "Download"))}&nbsp;&nbsp;{Icon("trash", "Delete")}</td>");
+                html.AppendLine("</tr>");
             }
 
-            File.WriteAllText(summaryPath, summary.ToString(), new UTF8Encoding(false));
+            html.AppendLine("</tbody>");
+            html.AppendLine("</table>");
+            html.AppendLine("</div>");
+
+            File.WriteAllText(summaryPath, html.ToString(), new UTF8Encoding(false));
             _jobs.TryRemove(jobId, out _);
             return true;
         }

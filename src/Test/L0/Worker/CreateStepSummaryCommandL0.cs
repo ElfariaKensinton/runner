@@ -163,51 +163,17 @@ namespace GitHub.Runner.Common.Tests.Worker
                     });
                     _executionContext.SetupGet(x => x.UploadedArtifactSizeBytes).Returns(128L * 1024 * 1024);
 
-                    var artifactSummaryStepId = Guid.NewGuid();
-                    _executionContext.SetupGet(x => x.Id).Returns(artifactSummaryStepId);
-                    var tokenPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes("{\"scp\":\"Actions.Results:12345:67890\"}"))
-                        .TrimEnd('=').Replace('+', '-').Replace('/', '_');
-                    var accessToken = $"header.{tokenPayload}.signature";
-                    _executionContext.Setup(x => x.Global).Returns(new GlobalContext
-                    {
-                        Endpoints = new List<ServiceEndpoint>
-                        {
-                            new ServiceEndpoint
-                            {
-                                Name = "SystemVssConnection",
-                                Authorization = new EndpointAuthorization
-                                {
-                                    Parameters = new Dictionary<string, string>
-                                    {
-                                        ["AccessToken"] = accessToken
-                                    }
-                                }
-                            }
-                        },
-                        EnvironmentVariables = new Dictionary<string, string>(VarUtil.EnvironmentVariableKeyComparer),
-                        WriteDebug = true,
-                        Variables = _variables,
-                    });
-
                     var stepSummaryFile = Path.Combine(_rootDirectory, "artifact-summary");
                     WriteContent(stepSummaryFile, new List<string> { "# Upload results" });
 
                     _createStepCommand.ProcessCommand(_executionContext.Object, stepSummaryFile, null);
 
-                    Assert.True(ArtifactSummaryCollector.TryCreateSummary(
-                        _jobExecutionContext.Id,
-                        _rootDirectory,
-                        out var artifactSummaryPath,
-                        out var summaryStepId));
-                    Assert.Equal(artifactSummaryStepId, summaryStepId);
-
-                    var summary = File.ReadAllText(artifactSummaryPath);
-                    var summaryUrl = "https://artifacts.example.net/local-artifacts/summary?runId=12345";
-                    Assert.Contains("## Artifacts", summary);
+                    var summary = File.ReadAllText(stepSummaryFile);
                     Assert.Contains("Produced during runtime", summary);
-                    Assert.Contains("[Open artifact table](<" + summaryUrl + ">)", summary);
-                    Assert.DoesNotContain("<table", summary);
-                    Assert.DoesNotContain("border: 1px solid #d0d7de;", summary);
+                    Assert.Contains("<b>patched-runner-osx-arm64</b>", summary);
+                    Assert.Contains("128 MB", summary);
+                    Assert.Contains("sha256:33bbb800…", summary);
+                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/package.svg", summary);
 
                     _jobExecutionContext.Complete();
                     Assert.Equal(0, _issues.Count);
