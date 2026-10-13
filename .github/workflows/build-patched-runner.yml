@@ -5,6 +5,14 @@ on:
     branches: [feature/self-hosted-artifact-results-url]
   workflow_dispatch:
     inputs:
+      runner_type:
+        description: 'Where to run the macOS build jobs'
+        type: choice
+        required: true
+        default: github-hosted
+        options:
+          - github-hosted
+          - self-hosted
       push_to_release:
         description: 'Upload the built runner packages to a GitHub Release'
         type: boolean
@@ -21,7 +29,7 @@ jobs:
       fail-fast: false
       matrix:
         runtime: [osx-x64, osx-arm64]
-    runs-on: macos-latest
+    runs-on: ${{ inputs.runner_type == 'self-hosted' && fromJSON('["self-hosted", "macOS"]') || 'macos-latest' }}
     steps:
       - uses: actions/checkout@v7
       - name: Build runner layout
@@ -77,7 +85,7 @@ jobs:
 
             for (const artifact of visible) {
               const url = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}/artifacts/${artifact.id}`;
-              const name = artifact.name.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+              const name = artifact.name.replace(/\\\\/g, '\\\\\\\\').replace(/\\|/g, '\\\\|').replace(/\\[/g, '\\\\[').replace(/\\]/g, '\\\\]');
               const digest = artifact.digest || '—';
               lines.push(`| [**${name}**](${url}) | ${formatSize(artifact.size_in_bytes)} | \`${digest}\` |   |`);
             }
@@ -86,7 +94,7 @@ jobs:
               lines.push('| No artifacts found | — | — |   |');
             }
 
-            await core.summary.addRaw(lines.join('\n')).write();
+            await core.summary.addRaw(lines.join('\\n')).write();
 
   release:
     if: github.event_name == 'workflow_dispatch' && inputs.push_to_release
