@@ -202,24 +202,12 @@ namespace GitHub.Runner.Common.Tests.Worker
                     Assert.Equal(artifactSummaryStepId, summaryStepId);
 
                     var summary = File.ReadAllText(artifactSummaryPath);
-                    var downloadUrl = "https://artifacts.example.net/local-artifacts/download?path=12345%2Fpatched-runner-osx-arm64%2Fpatched-runner-osx-arm64.zip";
-                    Assert.Contains("border: 1px solid #d0d7de; border-radius: 6px;", summary);
-                    Assert.Contains("max-width: 900px;", summary);
-                    Assert.Contains("<h2 style=\"margin: 0; font-size: 16px; font-weight: 600;\">Artifacts</h2>", summary);
-                    Assert.Contains("<p style=\"margin: 4px 0 24px 0; font-size: 14px; color: #57606a;\">Produced during runtime</p>", summary);
-                    Assert.Contains("width: 45%;", summary);
-                    Assert.Contains("width: 20%;", summary);
-                    Assert.Contains("<tr style=\"border-top: 1px solid #d0d7de;\">", summary);
-                    Assert.Contains("href=\"" + downloadUrl + "\"", summary);
-                    Assert.Contains("patched-runner-osx-arm64", summary);
-                    Assert.Contains("128 MB", summary);
-                    Assert.Contains("sha256:33bbb800…", summary);
-                    Assert.Contains("fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\"", summary);
-                    Assert.Contains("flex-shrink: 0; min-width: 16px;", summary);
-                    Assert.Contains("M1.75 4.75L8 1.5L14.25 4.75V11.25L8 14.5L1.75 11.25V4.75Z", summary);
-                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/copy.svg?v=2", summary);
-                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/download.svg?v=2", summary);
-                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/trash.svg?v=2", summary);
+                    var summaryUrl = "https://artifacts.example.net/local-artifacts/summary?runId=12345";
+                    Assert.Contains("## Artifacts", summary);
+                    Assert.Contains("Produced during runtime", summary);
+                    Assert.Contains("[Open artifact table](<" + summaryUrl + ">)", summary);
+                    Assert.DoesNotContain("<table", summary);
+                    Assert.DoesNotContain("border: 1px solid #d0d7de;", summary);
 
                     _jobExecutionContext.Complete();
                     Assert.Equal(0, _issues.Count);
