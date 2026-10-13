@@ -287,6 +287,7 @@ namespace GitHub.Runner.Worker
                 var artifactId = ReadActionOutput(context, container, "artifact-id");
                 string downloadUrl = null;
                 string summaryUrl = null;
+                string summaryIconUrl = null;
 
                 // actions/upload-artifact uses workflow_run_backend_id from the
                 // Actions.Results scope in ACTIONS_RUNTIME_TOKEN. This is NOT the
@@ -313,6 +314,13 @@ namespace GitHub.Runner.Worker
                         Fragment = String.Empty
                     }.Uri;
                     summaryUrl = $"{summaryPageUri.GetLeftPart(UriPartial.Path)}?runId={Uri.EscapeDataString(runKey)}";
+                    var summaryIconUri = new UriBuilder(configuredUri)
+                    {
+                        Path = $"{basePath}/local-artifacts/icon/package.svg",
+                        Query = "v=3",
+                        Fragment = String.Empty
+                    }.Uri;
+                    summaryIconUrl = summaryIconUri.AbsoluteUri;
                     Trace.Info($"Artifact summary download path key: '{relativeArtifactPath}'");
                 }
 
@@ -353,7 +361,7 @@ namespace GitHub.Runner.Worker
                     ? Guid.NewGuid().ToString("N")
                     : artifactId.Trim();
 
-                ArtifactSummaryCollector.Add(context.Root.Id, context.Id, rowKey, row, summaryUrl);
+                ArtifactSummaryCollector.Add(context.Root.Id, context.Id, rowKey, row, summaryUrl, summaryIconUrl);
                 Trace.Info($"Collected artifact summary row for '{artifactName}' (download link available: {!String.IsNullOrWhiteSpace(downloadCell)})");
             }
             catch (Exception ex)
@@ -858,11 +866,12 @@ namespace GitHub.Runner.Worker
             public HashSet<string> ArtifactIds { get; } = new HashSet<string>(StringComparer.Ordinal);
             public Guid LastStepId { get; set; }
             public string SummaryUrl { get; set; }
+            public string SummaryIconUrl { get; set; }
         }
 
         private static readonly ConcurrentDictionary<Guid, JobSummaryState> _jobs = new ConcurrentDictionary<Guid, JobSummaryState>();
 
-        public static void Add(Guid jobId, Guid stepId, string artifactId, string htmlRow, string summaryUrl)
+        public static void Add(Guid jobId, Guid stepId, string artifactId, string htmlRow, string summaryUrl, string summaryIconUrl)
         {
             var state = _jobs.GetOrAdd(jobId, _ => new JobSummaryState());
             lock (state.Gate)
@@ -875,6 +884,7 @@ namespace GitHub.Runner.Worker
                 if (!String.IsNullOrWhiteSpace(summaryUrl))
                 {
                     state.SummaryUrl = summaryUrl;
+                    state.SummaryIconUrl = summaryIconUrl;
                 }
 
                 state.LastStepId = stepId;
@@ -893,11 +903,13 @@ namespace GitHub.Runner.Worker
 
             string[] rows;
             string summaryUrl;
+            string summaryIconUrl;
             lock (state.Gate)
             {
                 rows = state.Rows.ToArray();
                 stepRecordId = state.LastStepId;
                 summaryUrl = state.SummaryUrl;
+                summaryIconUrl = state.SummaryIconUrl;
             }
 
             if (rows.Length == 0 || stepRecordId == Guid.Empty)
@@ -913,11 +925,9 @@ namespace GitHub.Runner.Worker
             {
                 // GitHub sanitizes inline CSS in job summaries. Keep the summary entry
                 // simple and let the artifact server render the fully styled HTML card.
-                summary.AppendLine("## Artifacts");
+                summary.AppendLine($"## Artifacts [![Open artifact table](<{summaryIconUrl}>)](<{summaryUrl}>)");
                 summary.AppendLine();
                 summary.AppendLine("Produced during runtime");
-                summary.AppendLine();
-                summary.AppendLine($"[Open artifact table](<{summaryUrl}>)");
             }
             else
             {
