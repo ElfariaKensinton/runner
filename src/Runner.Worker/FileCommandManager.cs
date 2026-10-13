@@ -852,39 +852,60 @@ namespace GitHub.Runner.Worker
             summaryPath = Path.Combine(tempDirectory, $"artifact-summary-{jobId:N}.md");
 
             var basePath = baseUri.AbsolutePath.TrimEnd('/');
-            Uri BuildUri(string path, string query) => new UriBuilder(baseUri)
+            string IconUrl(string icon) => new UriBuilder(baseUri)
             {
-                Path = $"{basePath}{path}",
-                Query = query,
+                Path = $"{basePath}/local-artifacts/icon/{icon}.svg",
+                // GitHub's image proxy caches summary images by URL; bump v when an icon changes.
+                Query = "v=2",
                 Fragment = String.Empty
-            }.Uri;
+            }.Uri.AbsoluteUri;
+            string Esc(string value) => (value ?? String.Empty).Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+            string Attr(string value) => Esc(value).Replace("\"", "&quot;");
+            string Icon(string icon, string alt) => $"<img src=\"{Attr(IconUrl(icon))}\" alt=\"{Attr(alt)}\" width=\"16\" height=\"16\" />";
+            string LinkTo(string url, string inner) => String.IsNullOrWhiteSpace(url)
+                ? inner
+                : $"<a href=\"{Attr(url)}\" style=\"color:inherit;text-decoration:none;\">{inner}</a>";
 
-            // The artifact server draws the whole Artifacts card as an SVG from this data.
-            // GitHub's image proxy caches images by URL, so the data (and v=) is in the URL.
-            var payload = new List<Dictionary<string, string>>();
-            foreach (var row in rows)
+            // Same structure and measurements as GitHub's native Artifacts box (h4 title, 12px
+            // muted subtitle, 14px table, 12px digest, borders only under the header and between
+            // rows). Both class and inline style are set; whatever the summary sanitizer keeps is
+            // applied, the rest falls back to a plain table with the same content.
+            const string headStyle = "padding:0 16px 8px 0;font-size:14px;font-weight:600;color:#59636e;text-align:left;border:0;border-bottom:1px solid #d1d9e0;";
+            const string cellStyle = "padding:12px 16px 12px 0;font-size:14px;vertical-align:middle;border:0;border-bottom:1px solid #d1d9e0;";
+            const string lastCellStyle = "padding:12px 16px 12px 0;font-size:14px;vertical-align:middle;border:0;";
+
+            var html = new StringBuilder();
+            html.AppendLine("<div class=\"Box border rounded\" style=\"border:1px solid #d1d9e0;border-radius:6px;padding:16px 16px 0;\">");
+            html.AppendLine("<h4 class=\"text-bold h4\" style=\"margin:0;font-size:16px;font-weight:600;\">Artifacts</h4>");
+            html.AppendLine("<div class=\"color-fg-muted text-small\" style=\"margin:0 0 12px;font-size:12px;color:#59636e;\">Produced during runtime</div>");
+            html.AppendLine("<table style=\"width:100%;table-layout:fixed;border-collapse:collapse;\">");
+            html.AppendLine("<thead><tr>");
+            html.AppendLine($"<th width=\"34%\" align=\"left\" style=\"{headStyle}\">Name</th>");
+            html.AppendLine($"<th width=\"16%\" align=\"left\" style=\"{headStyle}\">Size</th>");
+            html.AppendLine($"<th width=\"34%\" align=\"left\" style=\"{headStyle}\">Digest</th>");
+            html.AppendLine($"<th width=\"16%\" style=\"{headStyle}\"></th>");
+            html.AppendLine("</tr></thead>");
+            html.AppendLine("<tbody>");
+            for (var i = 0; i < rows.Length; i++)
             {
-                payload.Add(new Dictionary<string, string>
-                {
-                    ["n"] = row.Name ?? String.Empty,
-                    ["s"] = row.Size ?? String.Empty,
-                    ["d"] = row.Digest ?? String.Empty
-                });
+                var row = rows[i];
+                var style = i == rows.Length - 1 ? lastCellStyle : cellStyle;
+                var url = row.DownloadUrl;
+                var digestHtml = String.IsNullOrWhiteSpace(row.Digest)
+                    ? "—"
+                    : $"<code style=\"font-size:12px;\">{Esc(row.Digest)}</code>&nbsp;&nbsp;{Icon("copy", "Copy digest")}";
+
+                html.AppendLine("<tr>");
+                html.AppendLine($"<td style=\"{style}\">{LinkTo(url, Icon("package", "Artifact"))}&nbsp;&nbsp;{LinkTo(url, $"<b>{Esc(row.Name)}</b>")}</td>");
+                html.AppendLine($"<td style=\"{style}\">{Esc(row.Size)}</td>");
+                html.AppendLine($"<td style=\"{style}\">{digestHtml}</td>");
+                html.AppendLine($"<td align=\"right\" style=\"{style}padding-right:0;\">{LinkTo(url, Icon("download", "Download"))}&nbsp;&nbsp;{Icon("trash", "Delete")}</td>");
+                html.AppendLine("</tr>");
             }
 
-            var data = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)))
-                .TrimEnd('=').Replace('+', '-').Replace('/', '_');
-            var imageUrl = BuildUri("/local-artifacts/summary.svg", $"v=3&d={data}").AbsoluteUri;
-
-            // One artifact: the card downloads it. Several: the card opens the server's list,
-            // because a single image cannot link each row separately.
-            var linkUrl = rows.Length == 1 && !String.IsNullOrWhiteSpace(rows[0].DownloadUrl)
-                ? rows[0].DownloadUrl
-                : BuildUri("/artifacts", String.Empty).AbsoluteUri;
-
-            string Attr(string value) => (value ?? String.Empty).Replace("&", "&amp;").Replace("\"", "&quot;").Replace("<", "&lt;");
-            var summary = $"<a href=\"{Attr(linkUrl)}\"><img src=\"{Attr(imageUrl)}\" alt=\"Artifacts\" /></a>{Environment.NewLine}";
-
+            html.AppendLine("</tbody>");
+            html.AppendLine("</table>");
+            html.AppendLine("</div>");
             File.WriteAllText(summaryPath, summary, new UTF8Encoding(false));
             _jobs.TryRemove(jobId, out _);
             return true;
