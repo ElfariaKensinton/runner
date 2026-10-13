@@ -321,7 +321,7 @@ namespace GitHub.Runner.Worker
                     : $"`{EscapeMarkdownTableCell(FormatDigestForDisplay(digest))}` {BuildIconImage(configuredUri, "copy", "Copy digest")}";
                 var downloadCell = String.IsNullOrWhiteSpace(downloadUrl)
                     ? "—"
-                    : $"<a href="{EscapeHtmlAttribute(downloadUrl)}" title="Download artifact">{BuildIconImage(configuredUri, "download", "Download")}</a> {BuildIconImage(configuredUri, "trash", "Delete")}";
+                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" title=\"Download artifact\">{BuildIconImage(configuredUri, "download", "Download")}</a> {BuildIconImage(configuredUri, "trash", "Delete")}";
                 if (String.IsNullOrWhiteSpace(downloadUrl))
                 {
                     Trace.Warning($"Could not determine the Actions.Results workflow-run backend ID for artifact '{artifactName}'; no download link was added");
