@@ -366,7 +366,7 @@ namespace GitHub.Runner.Worker
                 .Replace("|", "\\|")
                 .Replace("[", "\\[")
                 .Replace("]", "\\]")
-                .Replace("`", "\`")
+                .Replace("`", "\\`")
                 .Replace("\r", " ")
                 .Replace("\n", " ");
         }
