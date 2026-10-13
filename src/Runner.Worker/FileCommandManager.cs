@@ -286,6 +286,7 @@ namespace GitHub.Runner.Worker
                 var digest = ReadActionOutput(context, container, "artifact-digest");
                 var artifactId = ReadActionOutput(context, container, "artifact-id");
                 string downloadUrl = null;
+                string summaryUrl = null;
 
                 // actions/upload-artifact uses workflow_run_backend_id from the
                 // Actions.Results scope in ACTIONS_RUNTIME_TOKEN. This is NOT the
@@ -305,6 +306,13 @@ namespace GitHub.Runner.Worker
                         Fragment = String.Empty
                     }.Uri;
                     downloadUrl = $"{downloadBaseUri.GetLeftPart(UriPartial.Path)}?path={Uri.EscapeDataString(relativeArtifactPath)}";
+                    var summaryPageUri = new UriBuilder(configuredUri)
+                    {
+                        Path = $"{basePath}/local-artifacts/summary",
+                        Query = String.Empty,
+                        Fragment = String.Empty
+                    }.Uri;
+                    summaryUrl = $"{summaryPageUri.GetLeftPart(UriPartial.Path)}?runId={Uri.EscapeDataString(runKey)}";
                     Trace.Info($"Artifact summary download path key: '{relativeArtifactPath}'");
                 }
 
@@ -345,7 +353,7 @@ namespace GitHub.Runner.Worker
                     ? Guid.NewGuid().ToString("N")
                     : artifactId.Trim();
 
-                ArtifactSummaryCollector.Add(context.Root.Id, context.Id, rowKey, row);
+                ArtifactSummaryCollector.Add(context.Root.Id, context.Id, rowKey, row, summaryUrl);
                 Trace.Info($"Collected artifact summary row for '{artifactName}' (download link available: {!String.IsNullOrWhiteSpace(downloadCell)})");
             }
             catch (Exception ex)
@@ -849,18 +857,24 @@ namespace GitHub.Runner.Worker
             public List<string> Rows { get; } = new List<string>();
             public HashSet<string> ArtifactIds { get; } = new HashSet<string>(StringComparer.Ordinal);
             public Guid LastStepId { get; set; }
+            public string SummaryUrl { get; set; }
         }
 
         private static readonly ConcurrentDictionary<Guid, JobSummaryState> _jobs = new ConcurrentDictionary<Guid, JobSummaryState>();
 
-        public static void Add(Guid jobId, Guid stepId, string artifactId, string markdownRow)
+        public static void Add(Guid jobId, Guid stepId, string artifactId, string htmlRow, string summaryUrl)
         {
             var state = _jobs.GetOrAdd(jobId, _ => new JobSummaryState());
             lock (state.Gate)
             {
                 if (state.ArtifactIds.Add(artifactId))
                 {
-                    state.Rows.Add(markdownRow);
+                    state.Rows.Add(htmlRow);
+                }
+
+                if (!String.IsNullOrWhiteSpace(summaryUrl))
+                {
+                    state.SummaryUrl = summaryUrl;
                 }
 
                 state.LastStepId = stepId;
@@ -878,10 +892,12 @@ namespace GitHub.Runner.Worker
             }
 
             string[] rows;
+            string summaryUrl;
             lock (state.Gate)
             {
                 rows = state.Rows.ToArray();
                 stepRecordId = state.LastStepId;
+                summaryUrl = state.SummaryUrl;
             }
 
             if (rows.Length == 0 || stepRecordId == Guid.Empty)
@@ -893,26 +909,40 @@ namespace GitHub.Runner.Worker
             summaryPath = Path.Combine(tempDirectory, $"artifact-summary-{jobId:N}.md");
 
             var summary = new StringBuilder();
-            summary.AppendLine("<div style=\"border: 1px solid #d0d7de; border-radius: 6px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background-color: #ffffff; color: #24292f; max-width: 900px;\">");
-            summary.AppendLine("<div style=\"padding: 16px;\">");
-            summary.AppendLine("<h2 style=\"margin: 0; font-size: 16px; font-weight: 600;\">Artifacts</h2>");
-            summary.AppendLine("<p style=\"margin: 4px 0 24px 0; font-size: 14px; color: #57606a;\">Produced during runtime</p>");
-            summary.AppendLine("<table style=\"width: 100%; border-collapse: collapse; text-align: left; font-size: 14px;\">");
-            summary.AppendLine("<thead><tr>");
-            summary.AppendLine("<th style=\"padding: 8px 16px 16px 16px; color: #57606a; font-weight: 600; width: 45%;\">Name</th>");
-            summary.AppendLine("<th style=\"padding: 8px 16px 16px 16px; color: #57606a; font-weight: 600; width: 20%;\">Size</th>");
-            summary.AppendLine("<th style=\"padding: 8px 16px 16px 16px; color: #57606a; font-weight: 600;\">Digest</th>");
-            summary.AppendLine("<th style=\"padding: 8px 16px 16px 16px;\"></th>");
-            summary.AppendLine("</tr></thead>");
-            summary.AppendLine("<tbody>");
-            foreach (var row in rows)
+            if (!String.IsNullOrWhiteSpace(summaryUrl))
             {
-                summary.AppendLine(row);
+                // GitHub sanitizes inline CSS in job summaries. Keep the summary entry
+                // simple and let the artifact server render the fully styled HTML card.
+                summary.AppendLine("## Artifacts");
+                summary.AppendLine();
+                summary.AppendLine("Produced during runtime");
+                summary.AppendLine();
+                summary.AppendLine($"[Open artifact table](<{summaryUrl}>)");
             }
-            summary.AppendLine("</tbody>");
-            summary.AppendLine("</table>");
-            summary.AppendLine("</div>");
-            summary.AppendLine("</div>");
+            else
+            {
+                // Fallback when the external server run key cannot be determined.
+                summary.AppendLine("<div style=\"border: 1px solid #d0d7de; border-radius: 6px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; background-color: #ffffff; color: #24292f; max-width: 900px;\">");
+                summary.AppendLine("<div style=\"padding: 16px;\">");
+                summary.AppendLine("<h2 style=\"margin: 0; font-size: 16px; font-weight: 600;\">Artifacts</h2>");
+                summary.AppendLine("<p style=\"margin: 4px 0 24px 0; font-size: 14px; color: #57606a;\">Produced during runtime</p>");
+                summary.AppendLine("<table style=\"width: 100%; border-collapse: collapse; text-align: left; font-size: 14px;\">");
+                summary.AppendLine("<thead><tr>");
+                summary.AppendLine("<th style=\"padding: 8px 16px 16px 16px; color: #57606a; font-weight: 600; width: 45%;\">Name</th>");
+                summary.AppendLine("<th style=\"padding: 8px 16px 16px 16px; color: #57606a; font-weight: 600; width: 20%;\">Size</th>");
+                summary.AppendLine("<th style=\"padding: 8px 16px 16px 16px; color: #57606a; font-weight: 600;\">Digest</th>");
+                summary.AppendLine("<th style=\"padding: 8px 16px 16px 16px;\"></th>");
+                summary.AppendLine("</tr></thead>");
+                summary.AppendLine("<tbody>");
+                foreach (var row in rows)
+                {
+                    summary.AppendLine(row);
+                }
+                summary.AppendLine("</tbody>");
+                summary.AppendLine("</table>");
+                summary.AppendLine("</div>");
+                summary.AppendLine("</div>");
+            }
 
             File.WriteAllText(summaryPath, summary.ToString(), new UTF8Encoding(false));
             _jobs.TryRemove(jobId, out _);
