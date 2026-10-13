@@ -8,6 +8,7 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 
 namespace GitHub.Runner.Worker
 {
