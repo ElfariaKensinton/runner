@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runtime: [osx-x64, osx-arm64]
+        runtime: [osx-arm64]
     runs-on: ${{ inputs.runner_type == 'self-hosted' && fromJSON('["self-hosted", "macOS"]') || 'macos-latest' }}
     permissions:
       actions: read
@@ -102,8 +102,7 @@ jobs:
               }
             }
 
-            // Replace this architecture's asset only; the other matrix job
-            // publishes the other architecture under a different name.
+            // Replace this architecture's asset if it already exists.
             for (const asset of release.assets || []) {
               if (asset.name === assetName) {
                 await github.rest.repos.deleteReleaseAsset({
