@@ -171,8 +171,12 @@ namespace GitHub.Runner.Common.Tests.Worker
                     var summary = File.ReadAllText(stepSummaryFile);
                     Assert.Contains("## Artifacts", summary);
                     Assert.Contains("Produced during runtime", summary);
-                    Assert.Contains("| **Name** | **Size** | **Digest** |   |", summary);
-                    Assert.Contains("| **patched-runner-osx-arm64** | 128 MB | `sha256:33bbb8003ca9f2684ab9b9b85446aa77d27d2de61b094eef18c0e178e59774cd` | [⬇](https://artifacts.example.net/artifacts/12345/download \"Download artifact\") |", summary);
+                    Assert.Contains("| Name | Size | Digest | |", summary);
+                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/package.svg", summary);
+                    Assert.Contains("**patched-runner-osx-arm64**", summary);
+                    Assert.Contains("| 128 MB |", summary);
+                    Assert.Contains("`sha256:33bbb800…`", summary);
+                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/copy.svg", summary);
 
                     _jobExecutionContext.Complete();
                     Assert.Equal(0, _issues.Count);
