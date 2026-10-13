@@ -307,6 +307,7 @@ namespace GitHub.Runner.Worker
                         Fragment = String.Empty
                     }.Uri;
                     downloadUrl = $"{downloadBaseUri.GetLeftPart(UriPartial.Path)}?path={Uri.EscapeDataString(relativeArtifactPath)}";
+                    Trace.Info($"Artifact summary download path key: '{relativeArtifactPath}'");
                 }
 
                 // The filename remains clickable; the separate final column contains the download icon.
