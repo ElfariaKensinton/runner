@@ -44,15 +44,6 @@ jobs:
         run: ./dev.sh package Release ${{ matrix.runtime }}
         working-directory: src
 
-      # Upload to the configured Actions artifact service for short-term downloads.
-      - name: Publish patched runner package
-        uses: actions/upload-artifact@v7
-        with:
-          name: patched-runner-${{ matrix.runtime }}
-          path: _package/*
-          if-no-files-found: error
-          retention-days: 3
-
       # Do not use download-artifact here: these packages may be stored by a
       # self-hosted artifact server and therefore are not in GitHub's artifact API.
       # Upload the file directly from this build job to the GitHub Release.
@@ -137,3 +128,12 @@ jobs:
             });
 
             core.info(`Published ${assetName}: ${uploaded.data.browser_download_url}`);
+
+      # Upload to the configured Actions artifact service for short-term downloads.
+      - name: Publish patched runner package
+        uses: actions/upload-artifact@v7
+        with:
+          name: patched-runner-${{ matrix.runtime }}
+          path: _package/*
+          if-no-files-found: error
+          retention-days: 3
