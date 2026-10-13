@@ -282,7 +282,6 @@ namespace GitHub.Runner.Worker
                     artifactName = configuredArtifactName.Trim();
                 }
 
-                var visibleArtifactName = EscapeMarkdownTableCell(artifactName);
                 var size = FormatArtifactSize(context.UploadedArtifactSizeBytes);
                 var digest = ReadActionOutput(context, container, "artifact-digest");
                 var artifactId = ReadActionOutput(context, container, "artifact-id");
@@ -308,35 +307,26 @@ namespace GitHub.Runner.Worker
                     downloadUrl = $"{downloadBaseUri.GetLeftPart(UriPartial.Path)}?path={Uri.EscapeDataString(relativeArtifactPath)}";
                     Trace.Info($"Artifact summary download path key: '{relativeArtifactPath}'");
                 }
-
-                // Mirrors GitHub's native Artifacts list: package icon + bold (non-link)
-                // name, size, truncated digest with a copy icon, then download and delete
-                // icons. The icons are served by the artifact server itself because GitHub
-                // renders summary images through its image proxy, which needs a public
-                // URL with an image content type. The copy and delete icons are visual only:
-                // job summaries cannot run scripts.
-                // Summaries cannot set CSS, so <small> brings the text down to about
-                // GitHub's native 14px and &nbsp; spaces out the icons.
-                var nameCell = $"{BuildIconImage(configuredUri, "package", "Artifact")}&nbsp;&nbsp;<small><b>{EscapeHtmlText(artifactName)}</b></small>";
-                var sizeCell = $"<small>{size}</small>";
-                var digestCell = String.IsNullOrWhiteSpace(digest)
-                    ? "<small>—</small>"
-                    : $"<code>{EscapeHtmlText(FormatDigestForDisplay(digest))}</code>&nbsp;&nbsp;&nbsp;{BuildIconImage(configuredUri, "copy", "Copy digest")}";
-                var downloadCell = String.IsNullOrWhiteSpace(downloadUrl)
-                    ? "<small>—</small>"
-                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" title=\"Download artifact\">{BuildIconImage(configuredUri, "download", "Download")}</a>&nbsp;&nbsp;&nbsp;&nbsp;{BuildIconImage(configuredUri, "trash", "Delete")}";
-                if (String.IsNullOrWhiteSpace(downloadUrl))
+                else
                 {
                     Trace.Warning($"Could not determine the Actions.Results workflow-run backend ID for artifact '{artifactName}'; no download link was added");
                 }
 
-                var row = $"| {nameCell} | {sizeCell} | {digestCell} | {downloadCell} |";
+                // The table is rendered by the artifact server (see ArtifactSummaryCollector):
+                // a server-rendered image is needed to match GitHub's native artifact list.
+                var summaryRow = new ArtifactSummaryRow
+                {
+                    Name = artifactName,
+                    Size = size,
+                    Digest = String.IsNullOrWhiteSpace(digest) ? String.Empty : FormatDigestForDisplay(digest),
+                    DownloadUrl = downloadUrl
+                };
                 var rowKey = String.IsNullOrWhiteSpace(artifactId)
                     ? Guid.NewGuid().ToString("N")
                     : artifactId.Trim();
 
-                ArtifactSummaryCollector.Add(context.Root.Id, context.Id, rowKey, row);
-                Trace.Info($"Collected artifact summary row for '{artifactName}' (download link available: {!String.IsNullOrWhiteSpace(downloadCell)})");
+                ArtifactSummaryCollector.Add(context.Root.Id, context.Id, rowKey, configuredUri.AbsoluteUri, summaryRow);
+                Trace.Info($"Collected artifact summary row for '{artifactName}' (download link available: {!String.IsNullOrWhiteSpace(downloadUrl)})");
             }
             catch (Exception ex)
             {
@@ -498,19 +488,6 @@ namespace GitHub.Runner.Worker
                 : trimmed;
         }
 
-        private static string BuildIconImage(Uri configuredUri, string icon, string alt)
-        {
-            var iconUri = new UriBuilder(configuredUri)
-            {
-                Path = $"{configuredUri.AbsolutePath.TrimEnd('/')}/local-artifacts/icon/{icon}.svg",
-                // GitHub's image proxy caches summary images by URL. Bump this value
-                // whenever an icon changes, otherwise the old image keeps showing.
-                Query = "v=2",
-                Fragment = String.Empty
-            }.Uri;
-            return $"<img src=\"{EscapeHtmlAttribute(iconUri.AbsoluteUri)}\" alt=\"{EscapeHtmlAttribute(alt)}\" width=\"16\" height=\"16\" />";
-        }
-
         // Mirrors the artifact server's directory key for a workflow_run_backend_id:
         // numeric IDs are used as-is, any other (opaque/GUID) ID is stored under the
         // signed 64-bit FNV-1a hash of the raw ID. Linking with the raw GUID gives a
@@ -534,20 +511,6 @@ namespace GitHub.Runner.Worker
                 return ((long)hash).ToString(CultureInfo.InvariantCulture);
             }
         }
-
-        private static string EscapeMarkdownTableCell(string value)
-        {
-            return (value ?? String.Empty)
-                .Replace("\\", "\\\\")
-                .Replace("|", "\\|")
-                .Replace("[", "\\[")
-                .Replace("]", "\\]")
-                .Replace("`", "\\`")
-                .Replace("\r", " ")
-                .Replace("\n", " ");
-        }
-
-
 
         public void ProcessCommand(IExecutionContext context, string filePath, ContainerInfo container)
         {
@@ -825,28 +788,38 @@ namespace GitHub.Runner.Worker
         }
     }
 
+    internal sealed class ArtifactSummaryRow
+    {
+        public string Name { get; set; }
+        public string Size { get; set; }
+        public string Digest { get; set; }
+        public string DownloadUrl { get; set; }
+    }
+
     internal static class ArtifactSummaryCollector
     {
         private sealed class JobSummaryState
         {
             public object Gate { get; } = new object();
-            public List<string> Rows { get; } = new List<string>();
+            public List<ArtifactSummaryRow> Rows { get; } = new List<ArtifactSummaryRow>();
             public HashSet<string> ArtifactIds { get; } = new HashSet<string>(StringComparer.Ordinal);
+            public string BaseUrl { get; set; }
             public Guid LastStepId { get; set; }
         }
 
         private static readonly ConcurrentDictionary<Guid, JobSummaryState> _jobs = new ConcurrentDictionary<Guid, JobSummaryState>();
 
-        public static void Add(Guid jobId, Guid stepId, string artifactId, string markdownRow)
+        public static void Add(Guid jobId, Guid stepId, string artifactId, string baseUrl, ArtifactSummaryRow row)
         {
             var state = _jobs.GetOrAdd(jobId, _ => new JobSummaryState());
             lock (state.Gate)
             {
                 if (state.ArtifactIds.Add(artifactId))
                 {
-                    state.Rows.Add(markdownRow);
+                    state.Rows.Add(row);
                 }
 
+                state.BaseUrl = baseUrl;
                 state.LastStepId = stepId;
             }
         }
@@ -861,14 +834,16 @@ namespace GitHub.Runner.Worker
                 return false;
             }
 
-            string[] rows;
+            ArtifactSummaryRow[] rows;
+            string baseUrl;
             lock (state.Gate)
             {
                 rows = state.Rows.ToArray();
+                baseUrl = state.BaseUrl;
                 stepRecordId = state.LastStepId;
             }
 
-            if (rows.Length == 0 || stepRecordId == Guid.Empty)
+            if (rows.Length == 0 || stepRecordId == Guid.Empty || !Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri))
             {
                 return false;
             }
@@ -876,22 +851,43 @@ namespace GitHub.Runner.Worker
             Directory.CreateDirectory(tempDirectory);
             summaryPath = Path.Combine(tempDirectory, $"artifact-summary-{jobId:N}.md");
 
-            var summary = new StringBuilder();
-            summary.AppendLine("## Artifacts");
-            summary.AppendLine();
-            summary.AppendLine("Produced during runtime");
-            summary.AppendLine();
-            summary.AppendLine("| <small>Name</small> | <small>Size</small> | <small>Digest</small> | |");
-            summary.AppendLine("| :--- | :--- | :--- | :---: |");
+            var basePath = baseUri.AbsolutePath.TrimEnd('/');
+            Uri BuildUri(string path, string query) => new UriBuilder(baseUri)
+            {
+                Path = $"{basePath}{path}",
+                Query = query,
+                Fragment = String.Empty
+            }.Uri;
+
+            // The artifact server draws the whole Artifacts card as an SVG from this data.
+            // GitHub's image proxy caches images by URL, so the data (and v=) is in the URL.
+            var payload = new List<Dictionary<string, string>>();
             foreach (var row in rows)
             {
-                summary.AppendLine(row);
+                payload.Add(new Dictionary<string, string>
+                {
+                    ["n"] = row.Name ?? String.Empty,
+                    ["s"] = row.Size ?? String.Empty,
+                    ["d"] = row.Digest ?? String.Empty
+                });
             }
 
-            File.WriteAllText(summaryPath, summary.ToString(), new UTF8Encoding(false));
+            var data = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload)))
+                .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+            var imageUrl = BuildUri("/local-artifacts/summary.svg", $"v=3&d={data}").AbsoluteUri;
+
+            // One artifact: the card downloads it. Several: the card opens the server's list,
+            // because a single image cannot link each row separately.
+            var linkUrl = rows.Length == 1 && !String.IsNullOrWhiteSpace(rows[0].DownloadUrl)
+                ? rows[0].DownloadUrl
+                : BuildUri("/artifacts", String.Empty).AbsoluteUri;
+
+            string Attr(string value) => (value ?? String.Empty).Replace("&", "&amp;").Replace("\"", "&quot;").Replace("<", "&lt;");
+            var summary = $"<a href=\"{Attr(linkUrl)}\"><img src=\"{Attr(imageUrl)}\" alt=\"Artifacts\" /></a>{Environment.NewLine}";
+
+            File.WriteAllText(summaryPath, summary, new UTF8Encoding(false));
             _jobs.TryRemove(jobId, out _);
             return true;
         }
     }
-
 }

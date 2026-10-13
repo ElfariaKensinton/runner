@@ -169,14 +169,7 @@ namespace GitHub.Runner.Common.Tests.Worker
                     _createStepCommand.ProcessCommand(_executionContext.Object, stepSummaryFile, null);
 
                     var summary = File.ReadAllText(stepSummaryFile);
-                    Assert.Contains("## Artifacts", summary);
-                    Assert.Contains("Produced during runtime", summary);
-                    Assert.Contains("| <small>Name</small> | <small>Size</small> | <small>Digest</small> | |", summary);
-                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/package.svg", summary);
-                    Assert.Contains("<b>patched-runner-osx-arm64</b>", summary);
-                    Assert.Contains("<small>128 MB</small>", summary);
-                    Assert.Contains("<code>sha256:33bbb800…</code>", summary);
-                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/copy.svg", summary);
+                    Assert.Contains("https://artifacts.example.net/local-artifacts/summary.svg?v=3&amp;d=", summary);
 
                     _jobExecutionContext.Complete();
                     Assert.Equal(0, _issues.Count);
