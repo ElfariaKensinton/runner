@@ -151,6 +151,10 @@ jobs:
           });
 
           const visible = artifacts.filter(a => !a.expired);
+          if (visible.length === 0) {
+            core.info('No GitHub-managed artifacts found; external artifacts are summarized by the runner.');
+            return;
+          }
           const lines = [
             '## Artifacts',
             '',
@@ -171,10 +175,6 @@ jobs:
             const name = artifact.name.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
             const digest = artifact.digest || '—';
             lines.push(`| **${name}** | ${formatSize(artifact.size_in_bytes)} | \`${digest}\` | [⬇️](${url} "Download artifact") |`);
-          }
-
-          if (visible.length === 0) {
-            lines.push('| No artifacts found | — | — | — |');
           }
 
           await core.summary.addRaw(lines.join('\n')).write();
