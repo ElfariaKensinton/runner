@@ -151,7 +151,6 @@ namespace GitHub.Runner.Common.Tests.Worker
                     var outputFile = Path.Combine(_rootDirectory, "artifact-output");
                     WriteContent(outputFile, new List<string>
                     {
-                        "artifact-url=https://github.com/ElfariaKensinton/runner/actions/runs/42/artifacts/123",
                         "artifact-digest=sha256:33bbb8003ca9f2684ab9b9b85446aa77d27d2de61b094eef18c0e178e59774cd"
                     });
 
