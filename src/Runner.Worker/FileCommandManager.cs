@@ -537,7 +537,7 @@ namespace GitHub.Runner.Worker
                 Path = $"{configuredUri.AbsolutePath.TrimEnd('/')}/local-artifacts/icon/{icon}.svg",
                 // GitHub's image proxy caches summary images by URL. Bump this value
                 // whenever an icon changes, otherwise the old image keeps showing.
-                Query = "v=2",
+                Query = "v=3",
                 Fragment = String.Empty
             }.Uri;
             return $"<img src=\"{EscapeHtmlAttribute(iconUri.AbsoluteUri)}\" alt=\"{EscapeHtmlAttribute(alt)}\" width=\"16\" height=\"16\" />";
