@@ -227,83 +227,6 @@ namespace GitHub.Runner.Worker
 
         public Type ExtensionType => typeof(IFileCommandExtension);
 
-        private void AppendArtifactSummary(IExecutionContext context, string filePath)
-        {
-            try
-            {
-                // Redirecting upload-artifact to an external Results API means the
-                // artifact will not appear in GitHub's native artifact catalogue.
-                // Render the artifact as a row in the step summary instead of adding
-                // a generic portal link.
-                var configuredResultsUrl = Environment.GetEnvironmentVariable("ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE");
-                if (String.IsNullOrWhiteSpace(configuredResultsUrl))
-                {
-                    return;
-                }
-
-                var actionContext = context.GetGitHubContext("action") ?? String.Empty;
-                var telemetryAction = context.StepTelemetry?.Action ?? String.Empty;
-                var isArtifactUpload = actionContext.IndexOf("upload-artifact", StringComparison.OrdinalIgnoreCase) >= 0
-                    || (telemetryAction.IndexOf("upload", StringComparison.OrdinalIgnoreCase) >= 0
-                        && telemetryAction.IndexOf("artifact", StringComparison.OrdinalIgnoreCase) >= 0);
-                if (!isArtifactUpload)
-                {
-                    return;
-                }
-
-                if (!Uri.TryCreate(configuredResultsUrl, UriKind.Absolute, out var configuredUri)
-                    || (configuredUri.Scheme != Uri.UriSchemeHttp && configuredUri.Scheme != Uri.UriSchemeHttps))
-                {
-                    Trace.Warning("ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE is not a valid HTTP(S) URL; skipping external artifact summary table");
-                    return;
-                }
-
-                var artifactsPage = new UriBuilder(configuredUri)
-                {
-                    Path = "/artifacts",
-                    Query = String.Empty,
-                    Fragment = String.Empty
-                }.Uri.AbsoluteUri.TrimEnd('/');
-
-                var artifactName = "artifact";
-                if (context.ActionInputs?.TryGetValue("name", out var configuredArtifactName) == true
-                    && !String.IsNullOrWhiteSpace(configuredArtifactName))
-                {
-                    artifactName = configuredArtifactName.Trim();
-                }
-
-                var visibleArtifactName = EscapeMarkdownTableCell(artifactName);
-                var summary = new StringBuilder();
-                summary.AppendLine();
-                summary.AppendLine("### Artifacts");
-                summary.AppendLine();
-                summary.AppendLine("| Artifact | Download |");
-                summary.AppendLine("| --- | --- |");
-                summary.AppendLine($"| [{visibleArtifactName}]({artifactsPage}) | [Download]({artifactsPage}) |");
-                summary.AppendLine();
-                File.AppendAllText(filePath, summary.ToString());
-                Trace.Info($"Added artifact summary row for '{artifactName}' (artifact browser: {artifactsPage})");
-            }
-            catch (Exception ex)
-            {
-                // A convenience link must never fail an otherwise successful workflow step.
-                Trace.Warning($"Could not add artifact row to step summary: {ex.Message}");
-            }
-        }
-
-
-        private static string EscapeMarkdownTableCell(string value)
-        {
-            return (value ?? String.Empty)
-                .Replace("\\", "\\\\")
-                .Replace("|", "\\|")
-                .Replace("[", "\\[")
-                .Replace("]", "\\]")
-                .Replace("`", "\\`")
-                .Replace("\r", " ")
-                .Replace("\n", " ");
-        }
-
         public void ProcessCommand(IExecutionContext context, string filePath, ContainerInfo container)
         {
             if (String.IsNullOrEmpty(filePath))
@@ -314,8 +237,6 @@ namespace GitHub.Runner.Worker
 
             try
             {
-                AppendArtifactSummary(context, filePath);
-
                 if (!File.Exists(filePath))
                 {
                     Trace.Info($"Step Summary file ({filePath}) does not exist; skipping attachment upload");
