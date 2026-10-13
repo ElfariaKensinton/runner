@@ -311,8 +311,8 @@ namespace GitHub.Runner.Worker
                     Trace.Warning($"Could not determine the Actions.Results workflow-run backend ID for artifact '{artifactName}'; no download link was added");
                 }
 
-                // The table is rendered by the artifact server (see ArtifactSummaryCollector):
-                // a server-rendered image is needed to match GitHub's native artifact list.
+                // Collect the row now; JobRunner renders all collected artifacts into one HTML
+                // table and queues it as a job summary after the steps have finished.
                 var summaryRow = new ArtifactSummaryRow
                 {
                     Name = artifactName,
