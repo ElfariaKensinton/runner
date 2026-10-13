@@ -214,7 +214,9 @@ namespace GitHub.Runner.Common.Tests.Worker
                     Assert.Contains("patched-runner-osx-arm64", summary);
                     Assert.Contains("128 MB", summary);
                     Assert.Contains("sha256:33bbb800…", summary);
-                    Assert.Contains("https://artifacts.example.net/local-artifacts/icon/package.svg?v=2", summary);
+                    Assert.Contains("fill=\\"none\\" stroke=\\"currentColor\\" stroke-width=\\"1.5\\"", summary);
+                    Assert.Contains("flex-shrink: 0; min-width: 16px;", summary);
+                    Assert.Contains("M1.75 4.75L8 1.5L14.25 4.75V11.25L8 14.5L1.75 11.25V4.75Z", summary);
                     Assert.Contains("https://artifacts.example.net/local-artifacts/icon/copy.svg?v=2", summary);
                     Assert.Contains("https://artifacts.example.net/local-artifacts/icon/download.svg?v=2", summary);
                     Assert.Contains("https://artifacts.example.net/local-artifacts/icon/trash.svg?v=2", summary);
