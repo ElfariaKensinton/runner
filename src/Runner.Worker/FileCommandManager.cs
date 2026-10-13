@@ -1,4 +1,5 @@
 ﻿using GitHub.DistributedTask.WebApi;
+using GitHub.DistributedTask.Pipelines.ContextData;
 using GitHub.Runner.Worker.Container;
 using GitHub.Runner.Common;
 using System;
@@ -76,18 +77,38 @@ namespace GitHub.Runner.Worker
 
         public void ProcessFiles(IExecutionContext context, ContainerInfo container)
         {
+            // Parse GITHUB_OUTPUT before generating the summary because the summary uses
+            // the outputs written by actions/upload-artifact.
             foreach (var fileCommand in _commandExtensions)
             {
-                try
+                if (fileCommand is CreateStepSummaryCommand)
                 {
-                    fileCommand.ProcessCommand(context, Path.Combine(_fileCommandDirectory, fileCommand.FilePrefix + _fileSuffix), container);
+                    continue;
                 }
-                catch (Exception ex)
+
+                ProcessFileCommand(context, fileCommand, container);
+            }
+
+            foreach (var fileCommand in _commandExtensions)
+            {
+                if (fileCommand is CreateStepSummaryCommand)
                 {
-                    context.Error($"Unable to process file command '{fileCommand.ContextName}' successfully.");
-                    context.Error(ex);
-                    context.CommandResult = TaskResult.Failed;
+                    ProcessFileCommand(context, fileCommand, container);
                 }
+            }
+        }
+
+        private void ProcessFileCommand(IExecutionContext context, IFileCommandExtension fileCommand, ContainerInfo container)
+        {
+            try
+            {
+                fileCommand.ProcessCommand(context, Path.Combine(_fileCommandDirectory, fileCommand.FilePrefix + _fileSuffix), container);
+            }
+            catch (Exception ex)
+            {
+                context.Error($"Unable to process file command '{fileCommand.ContextName}' successfully.");
+                context.Error(ex);
+                context.CommandResult = TaskResult.Failed;
             }
         }
 
@@ -267,23 +288,39 @@ namespace GitHub.Runner.Worker
                     ? "—"
                     : $"`{EscapeMarkdownTableCell(digest.Trim())}`";
                 var artifactId = ReadActionOutput(context, container, "artifact-id");
-                var downloadCell = String.Empty;
+                var artifactUrl = ReadActionOutput(context, container, "artifact-url");
+                string downloadUrl = null;
+
                 if (!String.IsNullOrWhiteSpace(artifactId))
                 {
-                    var downloadUrl = new UriBuilder(configuredUri)
+                    downloadUrl = new UriBuilder(configuredUri)
                     {
                         Path = $"/artifacts/{Uri.EscapeDataString(artifactId.Trim())}/download",
                         Query = String.Empty,
                         Fragment = String.Empty
                     }.Uri.AbsoluteUri;
-                    downloadCell = $"[⬇️]({downloadUrl} \"Download artifact\")";
                 }
-                else
+                else if (Uri.TryCreate(artifactUrl, UriKind.Absolute, out var artifactUri)
+                    && (artifactUri.Scheme == Uri.UriSchemeHttp || artifactUri.Scheme == Uri.UriSchemeHttps))
                 {
-                    Trace.Warning($"Artifact '{artifactName}' did not expose artifact-id; leaving its download cell empty");
+                    downloadUrl = artifactUri.AbsoluteUri;
                 }
 
-                var row = $"| **{visibleArtifactName}** | {size} | {digestCell} | {downloadCell} |";
+                // The filename remains clickable; the separate final column contains the download icon.
+                // GitHub may sanitize inline styles in job summaries, but preserve the intended styling here.
+                var nameCell = String.IsNullOrWhiteSpace(downloadUrl)
+                    ? $"**{visibleArtifactName}**"
+                    : $"<a href=\"{EscapeHtmlAttribute(downloadUrl)}\" style=\"color: #000; text-decoration: none;\"><strong>{EscapeHtmlText(artifactName)}</strong></a>";
+                var downloadCell = String.IsNullOrWhiteSpace(downloadUrl)
+                    ? "—"
+                    : $"[⬇️]({downloadUrl} \"Download artifact\")";
+
+                if (String.IsNullOrWhiteSpace(downloadUrl))
+                {
+                    Trace.Warning($"Artifact '{artifactName}' did not expose artifact-id or a usable artifact-url");
+                }
+
+                var row = $"| {nameCell} | {size} | {digestCell} | {downloadCell} |";
                 var rowKey = String.IsNullOrWhiteSpace(artifactId)
                     ? Guid.NewGuid().ToString("N")
                     : artifactId.Trim();
@@ -300,6 +337,25 @@ namespace GitHub.Runner.Worker
 
         private static string ReadActionOutput(IExecutionContext context, ContainerInfo container, string outputName)
         {
+            // The output file is processed before the summary command. Prefer the parsed step output.
+            if (!String.IsNullOrEmpty(context.ContextName))
+            {
+                var scope = context.Global.StepsContext.GetScope(context.ScopeName);
+                if (scope.TryGetValue(context.ContextName, out var stepValue))
+                {
+                    var step = stepValue.AssertDictionary("step");
+                    if (step.TryGetValue("outputs", out var outputsValue))
+                    {
+                        var outputs = outputsValue.AssertDictionary("outputs");
+                        if (outputs.TryGetValue(outputName, out var outputValue))
+                        {
+                            return outputValue as StringContextData;
+                        }
+                    }
+                }
+            }
+
+            // Fallback to reading GITHUB_OUTPUT directly.
             var outputPath = context.GetGitHubContext("output");
             if (String.IsNullOrWhiteSpace(outputPath))
             {
@@ -326,6 +382,21 @@ namespace GitHub.Runner.Worker
             }
 
             return null;
+        }
+
+        private static string EscapeHtmlText(string value)
+        {
+            return (value ?? String.Empty)
+                .Replace("&", "&amp;")
+                .Replace("<", "&lt;")
+                .Replace(">", "&gt;")
+                .Replace("\"", "&quot;")
+                .Replace("'", "&#39;");
+        }
+
+        private static string EscapeHtmlAttribute(string value)
+        {
+            return EscapeHtmlText(value);
         }
 
         private static string FormatArtifactSize(long? sizeBytes)
