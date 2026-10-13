@@ -2,13 +2,22 @@ name: Runner CD
 
 on:
   workflow_dispatch:
+    inputs:
+      push_to_release:
+        description: 'Publish build artifacts as a GitHub Release'
+        type: boolean
+        required: true
+        default: false
   push:
+    branches:
+    - main
+    - 'releases/**'
     paths:
     - releaseVersion
 
 jobs:
   check:
-    if: startsWith(github.ref, 'refs/heads/releases/') || github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/releases/') || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v7
@@ -28,18 +37,23 @@ jobs:
             core.setFailed('Version mismatch! Make sure ./releaseVersion match ./src/runnerVersion')
             return
           }
-          try {
-            const release = await github.rest.repos.getReleaseByTag({
-              owner: '${{ github.event.repository.owner.name }}',
-              repo: '${{ github.event.repository.name }}',
-              tag: 'v' + runnerVersion
-            })
-            core.setFailed('Release with same tag already created: ' + release.data.html_url)
-          } catch (e) {
-            // We are good to create the release if release with same tag doesn't exists
-            if (e.status != 404) {
-              throw e
+          const shouldPublishRelease = ${{ github.event_name != 'workflow_dispatch' || inputs.push_to_release }};
+          if (shouldPublishRelease) {
+            try {
+              const release = await github.rest.repos.getReleaseByTag({
+                owner: '${{ github.event.repository.owner.name }}',
+                repo: '${{ github.event.repository.name }}',
+                tag: 'v' + runnerVersion
+              })
+              core.setFailed('Release with same tag already created: ' + release.data.html_url)
+            } catch (e) {
+              // We are good to create the release if release with same tag doesn't exists
+              if (e.status != 404) {
+                throw e
+              }
             }
+          } else {
+            core.info('Push to release is disabled; skipping the existing-release check.')
           }
 
   build:
@@ -125,6 +139,7 @@ jobs:
           _package
 
   release:
+    if: github.event_name != 'workflow_dispatch' || inputs.push_to_release
     needs: build
     runs-on: ubuntu-latest
     steps:
