@@ -132,6 +132,102 @@ namespace GitHub.Runner.Worker
 
         public Type ExtensionType => typeof(IFileCommandExtension);
 
+        public void ProcessCommand(IExecutionContext context, string filePath, ContainerInfo container)
+        {
+            if (File.Exists(filePath))
+            {
+                var lines = File.ReadAllLines(filePath, Encoding.UTF8);
+                foreach (var line in lines)
+                {
+                    if (line == string.Empty)
+                    {
+                        continue;
+                    }
+                    if (context.DeferredPrependPath != null)
+                    {
+                        context.DeferredPrependPath.RemoveAll(x => string.Equals(x, line, StringComparison.CurrentCulture));
+                        context.DeferredPrependPath.Add(line);
+                    }
+                    else
+                    {
+                        context.Global.PrependPath.RemoveAll(x => string.Equals(x, line, StringComparison.CurrentCulture));
+                        context.Global.PrependPath.Add(line);
+                    }
+                }
+            }
+        }
+    }
+
+    public sealed class SetEnvFileCommand : RunnerService, IFileCommandExtension
+    {
+        public string ContextName => "env";
+        public string FilePrefix => "set_env_";
+
+        public Type ExtensionType => typeof(IFileCommandExtension);
+
+        public void ProcessCommand(IExecutionContext context, string filePath, ContainerInfo container)
+        {
+            var pairs = new EnvFileKeyValuePairs(context, filePath);
+            foreach (var pair in pairs)
+            {
+                var isBlocked = false;
+                foreach (var blocked in _setEnvBlockList)
+                {
+                    if (string.Equals(blocked, pair.Key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Log Telemetry and let user know they shouldn't do this
+                        var issue = new Issue()
+                        {
+                            Type = IssueType.Error,
+                            Message = $"Can't store {blocked} output parameter using '$GITHUB_ENV' command."
+                        };
+                        issue.Data[Constants.Runner.InternalTelemetryIssueDataKey] = $"{Constants.Runner.UnsupportedCommand}_{pair.Key}";
+                        context.AddIssue(issue, ExecutionContextLogOptions.Default);
+
+                        isBlocked = true;
+                        break;
+                    }
+                }
+                if (isBlocked)
+                {
+                    continue;
+                }
+                SetEnvironmentVariable(context, pair.Key, pair.Value);
+            }
+        }
+
+        private static void SetEnvironmentVariable(
+            IExecutionContext context,
+            string name,
+            string value)
+        {
+            if (context.DeferredEnvironmentVariables != null)
+            {
+                context.DeferredEnvironmentVariables[name] = value;
+            }
+            else
+            {
+                context.Global.EnvironmentVariables[name] = value;
+                context.SetEnvContext(name, value);
+            }
+            context.Debug($"{name}='{value}'");
+        }
+
+        private string[] _setEnvBlockList =
+        {
+            "NODE_OPTIONS"
+        };
+    }
+
+    public sealed class CreateStepSummaryCommand : RunnerService, IFileCommandExtension
+    {
+        public const int AttachmentSizeLimit = 1024 * 1024;
+
+        public string ContextName => "step_summary";
+        public string FilePrefix => "step_summary_";
+
+        public Type ExtensionType => typeof(IFileCommandExtension);
+
         private void AppendArtifactSummary(IExecutionContext context, string filePath, ContainerInfo container)
         {
             try
@@ -270,101 +366,7 @@ namespace GitHub.Runner.Worker
                 .Replace("\n", " ");
         }
 
-        public void ProcessCommand(IExecutionContext context, string filePath, ContainerInfo container)
-        {
-            if (File.Exists(filePath))
-            {
-                var lines = File.ReadAllLines(filePath, Encoding.UTF8);
-                foreach (var line in lines)
-                {
-                    if (line == string.Empty)
-                    {
-                        continue;
-                    }
-                    if (context.DeferredPrependPath != null)
-                    {
-                        context.DeferredPrependPath.RemoveAll(x => string.Equals(x, line, StringComparison.CurrentCulture));
-                        context.DeferredPrependPath.Add(line);
-                    }
-                    else
-                    {
-                        context.Global.PrependPath.RemoveAll(x => string.Equals(x, line, StringComparison.CurrentCulture));
-                        context.Global.PrependPath.Add(line);
-                    }
-                }
-            }
-        }
-    }
 
-    public sealed class SetEnvFileCommand : RunnerService, IFileCommandExtension
-    {
-        public string ContextName => "env";
-        public string FilePrefix => "set_env_";
-
-        public Type ExtensionType => typeof(IFileCommandExtension);
-
-        public void ProcessCommand(IExecutionContext context, string filePath, ContainerInfo container)
-        {
-            var pairs = new EnvFileKeyValuePairs(context, filePath);
-            foreach (var pair in pairs)
-            {
-                var isBlocked = false;
-                foreach (var blocked in _setEnvBlockList)
-                {
-                    if (string.Equals(blocked, pair.Key, StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Log Telemetry and let user know they shouldn't do this
-                        var issue = new Issue()
-                        {
-                            Type = IssueType.Error,
-                            Message = $"Can't store {blocked} output parameter using '$GITHUB_ENV' command."
-                        };
-                        issue.Data[Constants.Runner.InternalTelemetryIssueDataKey] = $"{Constants.Runner.UnsupportedCommand}_{pair.Key}";
-                        context.AddIssue(issue, ExecutionContextLogOptions.Default);
-
-                        isBlocked = true;
-                        break;
-                    }
-                }
-                if (isBlocked)
-                {
-                    continue;
-                }
-                SetEnvironmentVariable(context, pair.Key, pair.Value);
-            }
-        }
-
-        private static void SetEnvironmentVariable(
-            IExecutionContext context,
-            string name,
-            string value)
-        {
-            if (context.DeferredEnvironmentVariables != null)
-            {
-                context.DeferredEnvironmentVariables[name] = value;
-            }
-            else
-            {
-                context.Global.EnvironmentVariables[name] = value;
-                context.SetEnvContext(name, value);
-            }
-            context.Debug($"{name}='{value}'");
-        }
-
-        private string[] _setEnvBlockList =
-        {
-            "NODE_OPTIONS"
-        };
-    }
-
-    public sealed class CreateStepSummaryCommand : RunnerService, IFileCommandExtension
-    {
-        public const int AttachmentSizeLimit = 1024 * 1024;
-
-        public string ContextName => "step_summary";
-        public string FilePrefix => "step_summary_";
-
-        public Type ExtensionType => typeof(IFileCommandExtension);
 
         public void ProcessCommand(IExecutionContext context, string filePath, ContainerInfo container)
         {
