@@ -1105,6 +1105,12 @@ namespace GitHub.Runner.Worker
         public long Write(string tag, string message)
         {
             string msg = HostContext.SecretMasker.MaskSecrets($"{tag}{message}");
+
+            // Mirror the already-masked user-facing log line into Worker diagnostics.
+            // HomeRun tails Worker logs for live step output because GitHub's downloadable
+            // job log blob may not be published until the job has completed.
+            Trace.Info(msg);
+
             long totalLines;
             lock (_loggerLock)
             {
