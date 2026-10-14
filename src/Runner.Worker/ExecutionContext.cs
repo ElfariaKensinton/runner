@@ -1149,7 +1149,7 @@ namespace GitHub.Runner.Worker
                     {
                         var existing = File.ReadAllBytes(path);
                         var start = Math.Max(0, existing.Length - HomeRunStepLogMaxBytes);
-                        while (start < existing.Length && existing[start] != (byte)'\\n')
+                        while (start < existing.Length && existing[start] != (byte)'\n')
                         {
                             start++;
                         }
