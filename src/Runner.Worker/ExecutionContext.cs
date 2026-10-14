@@ -151,6 +151,9 @@ namespace GitHub.Runner.Worker
         private const int _maxIssueMessageLengthInTelemetry = 256; // Only send the first 256 characters of issue message to telemetry
 
         private readonly TimelineRecord _record = new();
+        private static readonly object _homeRunStepLogsLock = new();
+        private const int HomeRunStepLogMaxBytes = 1024 * 1024;
+        private string _homeRunStepLogsDirectory;
         private readonly Dictionary<Guid, TimelineRecord> _detailRecords = new();
         private readonly object _loggerLock = new();
         private readonly object _matchersLock = new();
@@ -1081,6 +1084,25 @@ namespace GitHub.Runner.Worker
                 refName: message.JobName,
                 order: null); // The job timeline record's order is set by server.
 
+            // Keep a dedicated sidecar for HomeRun. Worker diagnostics contain internal
+            // runner traces; this file receives only masked, user-facing step output.
+            try
+            {
+                _homeRunStepLogsDirectory = Path.Combine(
+                    HostContext.GetDirectory(WellKnownDirectory.Diag),
+                    "homerun-step-logs");
+                if (Directory.Exists(_homeRunStepLogsDirectory))
+                {
+                    Directory.Delete(_homeRunStepLogsDirectory, recursive: true);
+                }
+                Directory.CreateDirectory(_homeRunStepLogsDirectory);
+            }
+            catch (Exception ex)
+            {
+                _homeRunStepLogsDirectory = null;
+                Trace.Warning($"Could not initialize HomeRun step-log sidecar: {ex.Message}");
+            }
+
             // Logger (must be initialized before writing warnings).
             _logger = HostContext.CreateService<IPagingLogger>();
             _logger.Setup(_mainTimelineId, _record.Id);
@@ -1102,14 +1124,64 @@ namespace GitHub.Runner.Worker
         // Do not add a format string overload. In general, execution context messages are user facing and
         // therefore should be localized. Use the Loc methods from the StringUtil class. The exception to
         // the rule is command messages - which should be crafted using strongly typed wrapper methods.
+        private static void AppendHomeRunStepOutput(string directory, int stepNumber, string line)
+        {
+            if (string.IsNullOrEmpty(directory) || stepNumber <= 0 || string.IsNullOrEmpty(line))
+            {
+                return;
+            }
+
+            try
+            {
+                Directory.CreateDirectory(directory);
+                var path = Path.Combine(directory, $"step-{stepNumber.ToString(CultureInfo.InvariantCulture)}.log");
+                var bytes = Encoding.UTF8.GetBytes(line + Environment.NewLine);
+                lock (_homeRunStepLogsLock)
+                {
+                    using (var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+                    {
+                        stream.Write(bytes, 0, bytes.Length);
+                    }
+
+                    var info = new FileInfo(path);
+                    // Trim occasionally rather than letting a very verbose step grow forever.
+                    if (info.Length > HomeRunStepLogMaxBytes + (HomeRunStepLogMaxBytes / 4))
+                    {
+                        var existing = File.ReadAllBytes(path);
+                        var start = Math.Max(0, existing.Length - HomeRunStepLogMaxBytes);
+                        while (start < existing.Length && existing[start] != (byte)'\\n')
+                        {
+                            start++;
+                        }
+                        if (start < existing.Length)
+                        {
+                            start++;
+                        }
+
+                        File.WriteAllBytes(path, existing.AsSpan(start).ToArray());
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Step logging must never fail the workflow itself.
+                Trace.Warning($"Could not mirror HomeRun step output for step {stepNumber}: {ex.Message}");
+            }
+        }
+
         public long Write(string tag, string message)
         {
             string msg = HostContext.SecretMasker.MaskSecrets($"{tag}{message}");
 
-            // Mirror only the already-masked user-facing line with a dedicated marker.
-            // HomeRun filters Worker diagnostics by this marker so internal runner traces
-            // never leak into the live step-output panel.
-            Trace.Info($"HOMERUN_STEP_OUTPUT:: {msg}");
+            // Mirror only the already-masked user-facing output to a dedicated file.
+            // Do not write it through Trace.Info: that would pollute Worker diagnostics.
+            if (_record.RecordType == ExecutionContextType.Task)
+            {
+                AppendHomeRunStepOutput(
+                    Root._homeRunStepLogsDirectory,
+                    _record.Order,
+                    msg);
+            }
 
             long totalLines;
             lock (_loggerLock)
