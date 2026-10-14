@@ -1106,10 +1106,10 @@ namespace GitHub.Runner.Worker
         {
             string msg = HostContext.SecretMasker.MaskSecrets($"{tag}{message}");
 
-            // Mirror the already-masked user-facing log line into Worker diagnostics.
-            // HomeRun tails Worker logs for live step output because GitHub's downloadable
-            // job log blob may not be published until the job has completed.
-            Trace.Info(msg);
+            // Mirror only the already-masked user-facing line with a dedicated marker.
+            // HomeRun filters Worker diagnostics by this marker so internal runner traces
+            // never leak into the live step-output panel.
+            Trace.Info($"HOMERUN_STEP_OUTPUT:: {msg}");
 
             long totalLines;
             lock (_loggerLock)
