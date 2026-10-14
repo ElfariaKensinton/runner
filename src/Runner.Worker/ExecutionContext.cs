@@ -1124,17 +1124,18 @@ namespace GitHub.Runner.Worker
         // Do not add a format string overload. In general, execution context messages are user facing and
         // therefore should be localized. Use the Loc methods from the StringUtil class. The exception to
         // the rule is command messages - which should be crafted using strongly typed wrapper methods.
-        private static void AppendHomeRunStepOutput(string directory, int stepNumber, string line)
+        private void AppendHomeRunStepOutput(string directory, int? stepNumber, string line)
         {
-            if (string.IsNullOrEmpty(directory) || stepNumber <= 0 || string.IsNullOrEmpty(line))
+            if (string.IsNullOrEmpty(directory) || stepNumber.GetValueOrDefault() <= 0 || string.IsNullOrEmpty(line))
             {
                 return;
             }
 
+            var number = stepNumber.Value;
             try
             {
                 Directory.CreateDirectory(directory);
-                var path = Path.Combine(directory, $"step-{stepNumber.ToString(CultureInfo.InvariantCulture)}.log");
+                var path = Path.Combine(directory, $"step-{number.ToString(CultureInfo.InvariantCulture)}.log");
                 var bytes = Encoding.UTF8.GetBytes(line + Environment.NewLine);
                 lock (_homeRunStepLogsLock)
                 {
@@ -1165,7 +1166,7 @@ namespace GitHub.Runner.Worker
             catch (Exception ex)
             {
                 // Step logging must never fail the workflow itself.
-                Trace.Warning($"Could not mirror HomeRun step output for step {stepNumber}: {ex.Message}");
+                Trace.Warning($"Could not mirror HomeRun step output for step {number}: {ex.Message}");
             }
         }
 
