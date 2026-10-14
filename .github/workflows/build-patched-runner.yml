@@ -128,6 +128,39 @@ jobs:
 
             core.info(`Published ${assetName}: ${uploaded.data.browser_download_url}`);
 
+            // HomeRun's default preference downloads a stable v1 alias. Keep it
+            // pointed at the same freshly built patched macOS arm64 runner package.
+            const aliasRelease = (await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag: 'v1'
+            })).data;
+            const aliasAssetName = 'actions-runner.tar.gz';
+
+            for (const asset of aliasRelease.assets || []) {
+              if (asset.name === aliasAssetName) {
+                await github.rest.repos.deleteReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  asset_id: asset.id
+                });
+              }
+            }
+
+            const aliasUploaded = await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: aliasRelease.id,
+              name: aliasAssetName,
+              data: fs.createReadStream(assetPath),
+              headers: {
+                'content-type': 'application/gzip',
+                'content-length': stat.size
+              }
+            });
+
+            core.info(`Updated HomeRun's stable runner URL: ${aliasUploaded.data.browser_download_url}`);
+
       # Upload to the configured Actions artifact service for short-term downloads.
       - name: Publish patched runner package
         uses: actions/upload-artifact@v7
