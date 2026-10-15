@@ -242,7 +242,7 @@ namespace GitHub.Runner.Worker.Handlers
             // The override is only for artifact transfers. Cache-enabled actions also use
             // ACTIONS_RESULTS_URL with cache service v2, so keep them on the configured endpoint.
             var resultsUrlOverride = System.Environment.GetEnvironmentVariable("ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE");
-            var isArtifactAction = Action is RepositoryPathReference artifactAction
+            var isArtifactAction = Action is Pipelines.RepositoryPathReference artifactAction
                 && (string.Equals(artifactAction.Name, "actions/upload-artifact", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(artifactAction.Name, "actions/download-artifact", StringComparison.OrdinalIgnoreCase));
             if (isArtifactAction && !string.IsNullOrWhiteSpace(resultsUrlOverride))
