@@ -73,10 +73,13 @@ namespace GitHub.Runner.Worker.Handlers
                 Environment["ACTIONS_RESULTS_URL"] = resultsUrl;
             }
 
-            // Optional runner-host override for a self-hosted Actions Results service.
-            // Configure this variable on the runner host, not in individual workflows.
+            // The override is only for artifact transfers. Cache-enabled actions also use
+            // ACTIONS_RESULTS_URL with cache service v2, so keep them on the configured endpoint.
             var resultsUrlOverride = System.Environment.GetEnvironmentVariable("ACTIONS_ARTIFACTS_RESULTS_URL_OVERRIDE");
-            if (!string.IsNullOrWhiteSpace(resultsUrlOverride))
+            var isArtifactAction = Action is RepositoryPathReference artifactAction
+                && (string.Equals(artifactAction.Name, "actions/upload-artifact", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(artifactAction.Name, "actions/download-artifact", StringComparison.OrdinalIgnoreCase));
+            if (isArtifactAction && !string.IsNullOrWhiteSpace(resultsUrlOverride))
             {
                 Environment["ACTIONS_RESULTS_URL"] = resultsUrlOverride;
             }
