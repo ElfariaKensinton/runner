@@ -79,6 +79,13 @@ namespace GitHub.Runner.Worker.Handlers
                 return key;
             }
 
+            // A save step may consume cache-primary-key from a restore step. That output is
+            // already scoped by this runner, so applying the same scope must be idempotent.
+            if (key.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return key;
+            }
+
             var availableLength = MaximumCacheKeyLength - prefix.Length;
             if (key.Length <= availableLength)
             {
@@ -101,7 +108,7 @@ namespace GitHub.Runner.Worker.Handlers
             var normalizedLineEndings = restoreKeys.Replace("\r\n", "\n").Replace('\r', '\n');
             return string.Join("\n", normalizedLineEndings.Split('\n').Select(key =>
             {
-                if (string.IsNullOrWhiteSpace(key))
+                if (string.IsNullOrWhiteSpace(key) || key.StartsWith(prefix, StringComparison.Ordinal))
                 {
                     return key;
                 }

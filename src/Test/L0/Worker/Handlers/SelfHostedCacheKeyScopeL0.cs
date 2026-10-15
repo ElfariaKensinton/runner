@@ -30,6 +30,25 @@ namespace GitHub.Runner.Common.Tests.Worker.Handlers
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", "Worker")]
+        public void ACachePrimaryKeyCanBePassedToTheSaveActionWithoutDoubleScoping()
+        {
+            var environment = CreateEnvironment("/Users/elfaria/.homerun/runners/runner-a/_work/NotProton");
+
+            Assert.True(SelfHostedCacheKeyScope.TryApply(environment, "actions/cache/restore"));
+            var scopedKey = environment["INPUT_KEY"];
+            var scopedRestoreKeys = environment["INPUT_RESTORE-KEYS"];
+            environment["INPUT_KEY"] = scopedKey;
+            environment["INPUT_RESTORE-KEYS"] = scopedRestoreKeys;
+
+            Assert.True(SelfHostedCacheKeyScope.TryApply(environment, "actions/cache/save"));
+
+            Assert.Equal(scopedKey, environment["INPUT_KEY"]);
+            Assert.Equal(scopedRestoreKeys, environment["INPUT_RESTORE-KEYS"]);
+        }
+
+        [Fact]
+        [Trait("Level", "L0")]
+        [Trait("Category", "Worker")]
         public void DifferentWorkspacesCannotReuseTheSameCacheKey()
         {
             var first = CreateEnvironment("/Users/elfaria/.homerun/runners/runner-a/_work/NotProton");
