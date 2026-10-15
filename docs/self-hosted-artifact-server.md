@@ -15,6 +15,12 @@ The endpoint must implement the GitHub Actions Results API v4 protocol and suppo
 When `actions/upload-artifact` runs with this override, the patched runner adds an **Artifacts** table to that step's GitHub summary with `Name`, `Size`, and `Digest` columns. The artifact name is plain bold text (not a link); the last column contains a download icon linking directly to `{configured base URL}/artifacts/{artifact-id}/download`. The runner reads the ID and digest from `GITHUB_OUTPUT` and takes the uploaded archive size from the action's final-size log line. The self-hosted service must implement that direct-download route and return the artifact archive; the Results API v4 protocol itself does not define a browser page or this HTTP download route. The action's `artifact-url` output points to GitHub's native artifact route and is not used.
 
 
+## Self-hosted cache compatibility
+
+For the official `actions/cache`, `actions/cache/restore`, and `actions/cache/save` actions, the runner automatically scopes the `key` and each `restore-keys` entry on **self-hosted** runners. The scope is derived from the runner OS, architecture, `RUNNER_WORKSPACE`, and `GITHUB_WORKSPACE`. This prevents cache entries created under a different absolute workspace path from being restored into the current workspace; an incompatible entry becomes a cache miss, and the workflow can save a cache using the scoped key.
+
+GitHub-hosted cache keys are unchanged. Reuse on self-hosted runners requires the workspace path to remain the same; if a runner manager generates a new workspace path for every job, path-specific build caches will intentionally miss rather than restore stale absolute paths. No workflow changes are required for the official cache actions.
+
 ## Publishing to a GitHub Release
 
 When running **Runner CD** manually from GitHub Actions, use the **push_to_release** checkbox to control publishing. Leave it unchecked to build and upload workflow artifacts without creating a GitHub Release; check it to create the release and publish the platform packages. Pushes that update `releaseVersion` on `main` or a `releases/*` branch continue to publish automatically.

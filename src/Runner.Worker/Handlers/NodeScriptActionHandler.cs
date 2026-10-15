@@ -51,6 +51,14 @@ namespace GitHub.Runner.Worker.Handlers
                 }
             }
 
+            // A cache can contain build metadata with absolute paths. Do not allow a
+            // self-hosted workspace to restore entries written for a different workspace.
+            if (Action is RepositoryPathReference cacheAction
+                && SelfHostedCacheKeyScope.TryApply(Environment, cacheAction.Name))
+            {
+                Trace.Info($"Scoped cache keys for self-hosted workspace in action '{cacheAction.Name}'.");
+            }
+
             // Add Actions Runtime server info
             var systemConnection = ExecutionContext.Global.Endpoints.Single(x => string.Equals(x.Name, WellKnownServiceEndpointNames.SystemVssConnection, StringComparison.OrdinalIgnoreCase));
             Environment["ACTIONS_RUNTIME_URL"] = systemConnection.Url.AbsoluteUri;
